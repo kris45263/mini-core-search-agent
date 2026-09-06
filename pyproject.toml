@@ -1,0 +1,13 @@
+[project]
+name = "mini-core-search-agent"
+version = "0.1.0"
+description = "使用 DeepSeek 和 Tavily 的最小迭代搜索 Agent"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "httpx>=0.28.1",
+    "python-dotenv>=1.2.3",
+]
+
+[tool.uv]
+cache-dir = ".uv-cache"
