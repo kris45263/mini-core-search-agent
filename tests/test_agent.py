@@ -266,7 +266,9 @@ class VerboseTests(unittest.TestCase):
                     if verbose:
                         self.assertIn("工具执行：开始", err.getvalue())
                     return httpx.Response(200, json={"results": [{
-                        "title": "官方", "url": "https://example.org", "content": "资料"}]})
+                        "title": "官方", "url": "https://example.org", "content": "资料"},
+                        {"title": "重复", "url": "https://example.org", "content": "资料"},
+                        {"url": "https://example.org/empty", "content": " "}]})
                 messages = body["messages"]
                 if len(messages) == 2:
                     response = reply("我先查官方资料。", calls=[call("tavily_search", {"query": "Python 官方改进"})])
@@ -274,6 +276,9 @@ class VerboseTests(unittest.TestCase):
                     data["choices"][0]["message"]["reasoning_content"] = "隐藏推理不可展示"
                     return httpx.Response(200, json=data)
                 if len(messages) == 4:
+                    data = json.loads(messages[-1]["content"])
+                    self.assertEqual(data["processing"]["removed"], {"duplicate": 1, "empty_content": 1})
+                    self.assertEqual(len(data["results"]), 1)
                     return reply(calls=[call("think_tool", {"reflection": "内部笔记正文"})])
                 return reply("这是测试用的答案正文。")
 
@@ -296,6 +301,9 @@ class VerboseTests(unittest.TestCase):
                 for count in (2, 4, 6):
                     self.assertIn(f"上下文 {count} 条消息", err.getvalue())
                 self.assertIn("已写回上下文", err.getvalue())
+                self.assertIn("收到 3 条，保留 1 条", err.getvalue())
+                self.assertIn("URL 与正文完全重复 1 条", err.getvalue())
+                self.assertIn("空正文 1 条", err.getvalue())
                 self.assertIn("模型决定：直接回答", err.getvalue())
                 for unique in ("Python 官方改进", "https://example.org", "内部笔记正文", "我先查官方资料。"):
                     self.assertEqual(err.getvalue().count(unique), 1)

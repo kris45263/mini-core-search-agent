@@ -1,12 +1,14 @@
 """最小搜索 Agent 闭环：完整消息历史、模型自主工具决策和有界迭代。"""
 
 from datetime import date
+from copy import deepcopy
 import json
 import sys
 
 import httpx
 
 from tools import TOOLS, execute_tool
+from session import Session
 
 
 SYSTEM_PROMPT = """你是搜索研究助手。今天是 {today}。
@@ -25,10 +27,12 @@ def run_agent(
     question: str, *, client: httpx.Client, model: str,
     deepseek_api_key: str, tavily_api_key: str, max_iterations: int = 12,
     verbose: bool = False,
+    session: Session | None = None,
 ) -> str:
     """运行一次研究并返回最终文本；达到上限或模型异常时明确报错。
 
-    每次调用都建立独立的内存消息列表。循环只追加消息，不压缩、不持久化。
+    提供 session 时继承已完成历史，否则使用临时会话。只在成功回答后保存。
+    本次消息在深复制的副本中增长，失败或中断不污染原历史；不压缩、不持久化。
     一次迭代指一次模型请求，同一响应中的工具调用按顺序全部执行。
     verbose 只向 stderr 打印进度，不向消息历史中添加内容。
     """
@@ -77,6 +81,15 @@ def run_agent(
                                      f"链接：{item['url']}\n内容：\n{item['content']}")
                     else:
                         text = f"工具结果：\n{result}"
+                    if isinstance(data, dict) and "processing" in data:
+                        info = data["processing"]
+                        labels = {"invalid_item": "条目不是对象", "invalid_url": "无效 URL",
+                                  "invalid_fields": "字段类型错误", "empty_content": "空正文",
+                                  "duplicate": "URL 与正文完全重复"}
+                        reasons = "、".join(f"{labels.get(key, key)} {count} 条"
+                                            for key, count in info["removed"].items()) or "无"
+                        text += (f"\n结果处理：收到 {info['received']} 条，保留 {info['kept']} 条。"
+                                 f"排除：{reasons}")
                 except (ValueError, KeyError, TypeError):
                     text = f"工具结果（原文）：\n{result}"
             text += f"\n已写回上下文：当前 {details['message_count']} 条消息"
@@ -103,11 +116,17 @@ def run_agent(
         raise ValueError("用户问题不能为空")
     if max_iterations < 1:
         raise ValueError("最大循环次数必须大于零")
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT.format(
-            today=date.today().isoformat(), max_iterations=max_iterations)},
-        {"role": "user", "content": question},
-    ]
+    if session is None:
+        session = Session()
+    messages = deepcopy(session.messages)
+    system_message = {"role": "system", "content": SYSTEM_PROMPT.format(
+        today=date.today().isoformat(), max_iterations=max_iterations)}
+    # 已完成历史由本函数维护，第一条始终是唯一的系统提示词。
+    if messages:
+        messages[0] = system_message
+    else:
+        messages.append(system_message)
+    messages.append({"role": "user", "content": question})
     emit("start", question=question)
 
     try:
@@ -125,6 +144,8 @@ def run_agent(
             choice = response.json()["choices"][0]
             # 仅展示正常正文和显式工具调用，不转储 reasoning_content 或请求头。
             message = choice["message"]
+            if not isinstance(message, dict) or message.get("role") != "assistant":
+                raise ValueError("DeepSeek 返回的 message 格式异常。")
             emit("model_response", round=iteration + 1, content=message.get("content"),
                  tool_calls=message.get("tool_calls"), finish_reason=choice["finish_reason"])
             if choice["finish_reason"] not in {"stop", "tool_calls"}:
@@ -136,6 +157,8 @@ def run_agent(
                 answer = message.get("content")
                 if not isinstance(answer, str) or not answer.strip():
                     raise RuntimeError("DeepSeek 返回空答案，研究未完成。")
+                # 包括最终 assistant 答案在内，一次性保存完整的成功输入历史。
+                session.messages = messages
                 emit("final_answer", round=iteration + 1,
                      end_reason="no_tool_calls", finish_reason=choice["finish_reason"])
                 return answer

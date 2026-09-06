@@ -36,9 +36,12 @@ LangGraph 不是产生搜索能力的必要条件；在这个规模中，列表�
 
 ```text
 agent.py              # 提示词、DeepSeek 请求和完整消息循环
+session.py            # 进程内已完成历史及清空操作
 tools.py              # 两个工具的 schema、执行与简单错误结果
-main.py               # .env 配置和命令行入口
+main.py               # .env 配置、单次命令及 REPL 入口
 tests/test_agent.py    # 无网络、无真实密钥的闭环测试
+tests/test_session.py  # 跨输入继承、失败回退和清空隔离测试
+tests/test_search_results.py # 搜索结果整理与校验测试
 .env.example          # 可提交的空配置模板
 .env                  # 本地填写真实配置，已被 Git 忽略
 .gitignore
@@ -94,11 +97,83 @@ uv run python -X utf8 main.py "查找 Python 3.13 的主要改进，并提供官
 - 模型不调用工具并返回正常非空答案时，stderr 只显示“直接回答”和结束概况，答案正文仅通过 stdout 输出一次。
 - 达到上限、模型请求失败或中断时显示异常结束原因，不冒充正常答案。
 
-Tavily 展示的是现有工具实际回传的全部搜索片段，不是网页全文。没有修改搜索结果 schema、校验或过滤机制。不打印 `.env`、请求头、密钥或 `reasoning_content`，不请求隐藏推理。显式笔记、模型正常说明中的内容重叠不做语义删减，便于观察真实行为；显示副本中意外回显的本次密钥会被遮蔽。
+Tavily 展示的是处理后实际回传给模型的全部搜索片段，不是网页全文；同时显示收到、保留数量和各排除原因。不打印 `.env`、请求头、密钥或 `reasoning_content`，不请求隐藏推理。显式笔记、模型正常说明中的内容重叠不做语义删减，便于观察真实行为；显示副本中意外回显的本次密钥会被遮蔽。
+
+## 搜索结果结构与处理规则
+
+`tools.py` 用 `SearchResult`、`ProcessingInfo`、`SearchResponse` 三个 `TypedDict` 声明结果结构，`normalize_search_results()` 显式执行运行时校验；类型声明本身不提供运行时校验。
+
+```text
+query: 非空字符串，保留实际请求查询
+results: [{title: 非空字符串, url: 非空字符串, content: 非空字符串}]
+processing: {received: 收到数量, kept: 保留数量, removed: {原因: 数量}}
+error: 可选，非空返回全部被过滤时说明没有可用证据
+```
+
+处理顺序为：Tavily JSON → 检查顶层对象及 results 列表 → 逐条字段校验 → 保守文本整理 → 单次精确去重 → JSON 工具结果。正常原始空列表没有 `error`；缺少 results 或 results 类型错误沿用工具格式异常错误；条目全被排除时附上 `error` 和处理数量。
+
+- URL 必须是带主机的 HTTP(S) 字符串，拒绝内部空白、控制字符和非法端口。仅去掉首尾空白，不验证可访问性、不合并 www、不删除查询参数。
+- 正文必须是字符串，统一 CRLF/CR 为 LF 并去掉首尾空白；空正文排除。不删导航、不改写、不摘要、不截断。
+- 标题缺失、null 或空白时用 URL 代替；非字符串标题排除。非空标题仅整理换行和首尾空白。
+- 仅在单次调用内，整理后的 URL 和正文均相同时保留第一条。标题差异不影响判重；同 URL 不同正文、不同 URL 相同正文都保留，不进行跨轮次去重。
+- 每个坏条目仅计一个首要原因：`invalid_item`、`invalid_url`、`invalid_fields`、`empty_content` 或 `duplicate`。有效条目不会因其他坏条目而丢失。
+
+处理数量是工具结果的一部分，开关前后相同。没有引入 relevance threshold、域名质量筛选、rerank 或摘要模型。
 
 所有显示内容都不写入 `messages`。开关不改变提示词、工具定义、搜索结果、请求内容或调用次数；事件只同步显示真实执行步骤，没有新增状态机或评估框架。mock 测试逐项比较开关前后的请求相等，这保证程序没有因开关改变决策输入，不保证两次真实模型运行的随机输出相同。
 
 如果当前终端找不到 `uv`，将上述命令的 `uv` 替换为 `& "$env:USERPROFILE/.local/bin/uv.exe"`。项目将 uv 缓存放在已忽略的 `.uv-cache` 中，避免当前受限环境的全局缓存权限问题。
+
+## 内存 Session
+
+`run_agent()` 可接收同一个 `Session`，让连续输入继承已完成的用户消息、assistant 正文、工具调用、工具结果和最终答案。不传 `session` 时自动使用临时会话，现有单次命令行为保持不变。
+
+以下是同一 Python 进程内的调用示例；使用现有 `.env` 配置和 HTTP 客户端：
+
+```python
+from pathlib import Path
+import httpx
+from agent import run_agent
+from main import read_config
+from session import Session
+
+config = read_config(Path(".env"))
+session = Session()
+with httpx.Client() as client:
+    for question in ("Python 3.13 有哪些主要改进？", "其中第一项有哪些限制？"):
+        answer = run_agent(
+            question, client=client, session=session,
+            model=config["DEEPSEEK_MODEL"],
+            deepseek_api_key=config["DEEPSEEK_API_KEY"],
+            tavily_api_key=config["TAVILY_API_KEY"],
+        )
+        print(answer)
+session.clear()
+```
+
+每次提问深复制历史，更新唯一系统提示词的日期与循环上限，再追加新问题。仅正常返回非空最终答案后保存全部临时历史；请求失败、输出截断、空答案、超限或中断均保留提问前的历史。工具错误如果已回传给模型，且模型最终正常回答，则该错误也属于成功完成输入的历史。
+
+每个新问题重新计算模型调用轮次。清空会话会移除所有旧问答和工具结果。不撤销已经发生的请求、费用或终端输出，不自动重试失败输入。
+
+`Session.messages` 由 Agent 维护，调用方不要手工插入不配对的工具消息；同一 Session 只供顺序调用，不支持并发提问。暂无持久化、自动裁剪或压缩，长会话可能触及模型上下文上限。进程退出后历史消失。
+
+启动 REPL 可在同一个进程内连续使用这个会话：
+
+```powershell
+uv run python -X utf8 main.py --repl
+uv run python -X utf8 main.py --repl --verbose
+```
+
+启动时读取一次 `.env`，创建一个 HTTP 客户端及一个 Session，循环接收输入并复用它们。每次输入等待回答结束后再输入下一问。
+
+- `/new`：清空历史，继续输入。
+- `/exit`：退出程序；EOF（Windows 可用 Ctrl+Z 后回车）也会退出。
+- 空白输入：忽略，不请求模型。未知斜杠命令提示可用命令。
+- 研究期间 Ctrl+C：取消当前问题，保留此前完成历史，返回输入提示。
+- 等待输入期间 Ctrl+C：退出 REPL。
+- 研究失败：显示错误后继续输入；配置错误则在启动时退出。
+
+`--max-iterations` 对每个问题分别生效；`--verbose` 对本次启动的所有问题生效。`--repl` 不能同时附带单次问题。退出后不保存会话，反复执行单次 CLI 命令仍是独立会话。模型暂不流式输出。
 
 ## 无密钥验证
 
@@ -116,4 +191,4 @@ uv run python -X utf8 -m unittest discover -s tests -v
 - 所有消息始终保留，因此较长研究仍可能超过模型上下文限制。本版不增加自动裁剪或压缩。
 - 引用来源和及时停止由提示词引导，未实现事实核验或引用校验器。
 - DeepSeek 采用 [Chat Completions 工具调用协议](https://api-docs.deepseek.com/guides/tool_calls/)，显式设置 `thinking.type=disabled`，降低第一版协议复杂度；这是模型内部模式，与应用的 `think_tool` 不同。模式参数见 [Thinking Mode](https://api-docs.deepseek.com/guides/thinking_mode/)。Tavily 请求字段及结果形状见 [Search API](https://docs.tavily.com/documentation/api-reference/endpoint/search)。
-- 当前验证使用 mock，没有使用真实 API key；真实连接、账户权限、费用和搜索回答质量尚未验证。
+- 自动测试使用 mock；已完成真实 DeepSeek/Tavily 搜索闭环和 REPL 连续两问的会话记忆验证。尚未做系统性的回答质量或费用评估；真实运行成功不代表所有问题都能准确回答。

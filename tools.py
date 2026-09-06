@@ -1,8 +1,88 @@
 """最小研究工具：提供 Tavily 搜索和研究笔记回写，不引入额外模型或框架。"""
 
 import json
+from typing import NotRequired, TypedDict
+from urllib.parse import urlsplit
 
 import httpx
+
+
+class SearchResult(TypedDict):
+    """经过校验的单条来源，字段均为非空字符串。"""
+    title: str
+    url: str
+    content: str
+
+
+class ProcessingInfo(TypedDict):
+    """本次结果处理计数，用于说明保留数量与排除原因。"""
+    received: int
+    kept: int
+    removed: dict[str, int]
+
+
+class SearchResponse(TypedDict):
+    """搜索工具的成功或全部过滤结果；请求失败仍沿用 error 返回。"""
+    query: str
+    results: list[SearchResult]
+    processing: ProcessingInfo
+    error: NotRequired[str]
+
+
+def normalize_search_results(query: str, response: object) -> SearchResponse:
+    """显式校验原始字典并保守整理；TypedDict 本身不执行运行时校验。
+
+    坏条目只记首个失败原因。精确去重限定本次调用，保留首次出现顺序。
+    URL 只做语法检查，既不验证可访问性，也不合并域名或查询参数。
+    """
+    if not isinstance(query, str) or not query.strip():
+        raise ValueError("查询必须为非空字符串")
+    if not isinstance(response, dict) or not isinstance(response.get("results"), list):
+        raise ValueError("Tavily 响应必须包含 results 列表")
+    results: list[SearchResult] = []
+    removed: dict[str, int] = {}
+    seen: set[tuple[str, str]] = set()
+    for item in response["results"]:
+        reason = ""
+        if not isinstance(item, dict):
+            reason = "invalid_item"
+        elif not isinstance(item.get("url"), str):
+            reason = "invalid_url"
+        else:
+            url = item["url"].strip()
+            try:
+                parts = urlsplit(url)
+                if (parts.scheme not in {"http", "https"} or not parts.hostname
+                        or any(c.isspace() or ord(c) < 32 for c in url)):
+                    reason = "invalid_url"
+                # 读取 port 会检查非法端口；不对合法 URL 做重写。
+                _ = parts.port
+            except ValueError:
+                reason = "invalid_url"
+            if not reason:
+                content = item.get("content")
+                title = item.get("title")
+                if not isinstance(content, str) or (title is not None and not isinstance(title, str)):
+                    reason = "invalid_fields"
+                else:
+                    content = content.replace("\r\n", "\n").replace("\r", "\n").strip()
+                    title = (title or "").replace("\r\n", "\n").replace("\r", "\n").strip() or url
+                    if not content:
+                        reason = "empty_content"
+                    elif (url, content) in seen:
+                        reason = "duplicate"
+                    else:
+                        seen.add((url, content))
+                        results.append({"title": title, "url": url, "content": content})
+        if reason:
+            removed[reason] = removed.get(reason, 0) + 1
+    output: SearchResponse = {
+        "query": query, "results": results,
+        "processing": {"received": len(response["results"]), "kept": len(results), "removed": removed},
+    }
+    if response["results"] and not results:
+        output["error"] = "Tavily 返回的条目全部被过滤，本次没有可用搜索证据。"
+    return output
 
 
 TOOLS = [
@@ -36,7 +116,7 @@ TOOLS = [
 
 
 def tavily_search(query: str, *, client: httpx.Client, api_key: str) -> str:
-    """执行单次搜索，将三个结果的标题、链接和内容原样写入 JSON。"""
+    """执行单次搜索，经字段校验、文本整理和精确去重后返回 JSON。"""
     response = client.post(
         "https://api.tavily.com/search",
         headers={"Authorization": f"Bearer {api_key}"},
@@ -45,10 +125,7 @@ def tavily_search(query: str, *, client: httpx.Client, api_key: str) -> str:
         timeout=30,
     )
     response.raise_for_status()
-    # 只选择研究所需字段，不再调用模型摘要，也不截断返回的内容片段。
-    results = [{key: item[key] for key in ("title", "url", "content")}
-               for item in response.json()["results"]]
-    return json.dumps({"query": query, "results": results}, ensure_ascii=False)
+    return json.dumps(normalize_search_results(query, response.json()), ensure_ascii=False)
 
 
 def think_tool(reflection: str) -> str:
