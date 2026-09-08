@@ -1,69 +1,18 @@
 # mini-core-search-agent
 
-一个普通 Python 实现的最小迭代搜索 Agent。模型固定接入 DeepSeek，搜索固定接入 Tavily，只提供 `tavily_search` 和 `think_tool` 两个工具。
+普通 Python 实现的迭代研究 Agent：DeepSeek 负责决策，Tavily Search 寻找来源，Tavily Extract 读取指定页面。支持单次命令、内存 Session 和 REPL。
 
-## 为什么它能够迭代搜索
+## 启动
 
-核心是「模型决策 → 执行工具 → 将结果写回消息 → 模型重新决策」。程序没有预先生成的搜索列表，也不决定第二次应该搜什么。模型读取前一次实际返回的信息后，生成新的工具名和参数。
-
-1. 创建包含系统提示词和用户问题的 `messages`。
-2. 把完整 `messages` 和两个工具的 JSON schema 发给 DeepSeek。
-3. 追加完整 assistant 响应，保留正文、工具参数及调用编号。
-4. 有工具调用时执行工具，为每个调用追加带相同 `tool_call_id` 的 tool 消息。
-5. 将增长后的消息历史再次发给模型。
-6. 模型不再调用工具时，返回其非空最终文本；最多执行 12 次模型请求。
-
-`think_tool` 不调用其他模型，也不搜索。模型生成一份简短研究笔记作为 `reflection` 参数，工具将其回显到上下文。它帮助下一轮看见已有证据、缺口和下一步；它本身不能创造或验证事实。提示词建议搜索后使用该工具，代码不强制固定调用顺序。
-
-## 参考源码与取舍
-
-阅读基于上游提交 `93f35e5d2a51590f9542207a9ff66a01901da5bc`，实现为独立编写，未复制整个项目。
-
-| 阅读范围 | 提炼出的机制及本项目处理 |
-| --- | --- |
-| [README 的 Research Agent 部分](https://github.com/langchain-ai/deep_research_from_scratch/blob/93f35e5d2a51590f9542207a9ff66a01901da5bc/README.md#2-research-agent-with-custom-tools-notebooks2_research_agentipynb) | 保留模型决策与同步工具执行的迭代结构。 |
-| [2_research_agent.ipynb](https://github.com/langchain-ai/deep_research_from_scratch/blob/93f35e5d2a51590f9542207a9ff66a01901da5bc/notebooks/2_research_agent.ipynb) | 保留根据搜索结果判断缺口、继续或结束的思想，使用本地 mock 验证，去掉 Notebook 和 LangSmith 评估依赖。 |
-| [research_agent.py](https://github.com/langchain-ai/deep_research_from_scratch/blob/93f35e5d2a51590f9542207a9ff66a01901da5bc/src/deep_research_from_scratch/research_agent.py) | `llm_call`、`tool_node`、`should_continue` 合并为直观的 Python 循环；去掉退出后的 `compress_research`。 |
-| [state_research.py](https://github.com/langchain-ai/deep_research_from_scratch/blob/93f35e5d2a51590f9542207a9ff66a01901da5bc/src/deep_research_from_scratch/state_research.py) | `add_messages` 的追加语义用列表实现；去掉压缩结果、原始笔记副本及澄清/摘要 schema。 |
-| [utils.py](https://github.com/langchain-ai/deep_research_from_scratch/blob/93f35e5d2a51590f9542207a9ff66a01901da5bc/src/deep_research_from_scratch/utils.py) | 保留单条 Tavily 查询、标题/URL/内容和 think 回显；去掉网页全文获取、另一个模型的摘要及多查询封装。 |
-| [prompts.py](https://github.com/langchain-ai/deep_research_from_scratch/blob/93f35e5d2a51590f9542207a9ff66a01901da5bc/src/deep_research_from_scratch/prompts.py) | 保留按缺口调整查询、及时停止的研究指令；使用中文短提示词并实际填入日期和循环上限。 |
-
-LangGraph 不是产生搜索能力的必要条件；在这个规模中，列表追加和 `for`/`if` 已能清楚表达其关键行为。`think_tool` 是本版按要求保留的显式笔记步骤，也不是某种隐藏的搜索引擎。
-
-未引入多 Agent、supervisor、MCP、持久会话、数据库、LangSmith、大型评估、复杂状态机、recorder、metrics、privacy pipeline 或多 provider 抽象。单次研究的消息只存于内存。
-
-## 文件结构
-
-```text
-agent.py              # 提示词、DeepSeek 请求和完整消息循环
-session.py            # 进程内已完成历史及清空操作
-tools.py              # 两个工具的 schema、执行与简单错误结果
-main.py               # .env 配置、单次命令及 REPL 入口
-tests/test_agent.py    # 无网络、无真实密钥的闭环测试
-tests/test_session.py  # 跨输入继承、失败回退和清空隔离测试
-tests/test_search_results.py # 搜索结果整理与校验测试
-.env.example          # 可提交的空配置模板
-.env                  # 本地填写真实配置，已被 Git 忽略
-.gitignore
-.python-version       # Python 3.13
-pyproject.toml
-uv.lock               # 锁定依赖版本
-README.md
-```
-
-直接依赖只有 `httpx` 和 `python-dotenv`。使用 HTTP 调用 DeepSeek，不需要 OpenAI SDK 或 OpenAI API key。
-
-## 填写密钥并运行
-
-需要 Python 3.13 和 uv。当前项目已初始化虚拟环境；重新拉取项目后先在项目目录运行：
+需要 Python 3.13 和 uv：
 
 ```powershell
 uv sync --locked
+uv run python -X utf8 main.py "你的研究问题" --verbose
+uv run python -X utf8 main.py --repl --verbose
 ```
 
-当前文件夹已提供空 `.env`。新拉取的副本如果没有 `.env`，先执行 `Copy-Item .env.example .env`；不要覆盖已经填写过的文件。
-
-用编辑器在 `.env` 中填入：
+项目已有本地 `.env`；新拉取的副本如果没有它，执行 `Copy-Item .env.example .env`，不要覆盖已填写的文件。
 
 ```dotenv
 DEEPSEEK_API_KEY=你的DeepSeek密钥
@@ -71,124 +20,121 @@ DEEPSEEK_MODEL=deepseek-v4-flash
 TAVILY_API_KEY=你的Tavily密钥
 ```
 
-密钥分别在 [DeepSeek 平台](https://platform.deepseek.com/) 和 [Tavily 控制台](https://app.tavily.com/) 获取。模型名可以改成账号可用、支持工具调用的 DeepSeek 模型；程序没有静默默认模型或 provider 回退。
+只读取 `main.py` 同目录的 `.env`，不回退到系统环境中的同名密钥，不展开 `${变量}`。`.env`、虚拟环境及缓存均被 Git 忽略。若终端找不到 uv，可使用 `& "$env:USERPROFILE/.local/bin/uv.exe"`。
 
-程序固定读取 `main.py` 同目录的 `.env`，不读取系统环境中的同名密钥，不展开 `${变量}`。不要把密钥写进 Python 文件或提交到 Git。
+REPL 在启动时创建一次客户端和 Session，之后连续复用：
 
-```powershell
-uv run python -X utf8 main.py "查找 Python 3.13 的主要改进，并提供官方来源"
-uv run python -X utf8 main.py "比较两个项目的最新发布情况" --max-iterations 8
-```
+- `/new` 清空历史和页面快照。
+- `/exit` 或 EOF 退出。
+- 空输入不调用模型；未知斜杠命令会提示可用命令。
+- 研究期间 Ctrl+C 取消本次输入、返回提示；等待输入时 Ctrl+C 退出。
+- 研究失败后仍可继续输入，先前完成的历史保留。
 
-控制台默认只输出最终答案；等待期间模型和搜索请求同步执行。添加 `--verbose` 可完整观察模型与 harness 的显式交互：
+`--max-iterations 12` 控制每个问题最多的模型请求次数，默认 12。一次模型响应可能包含多个工具调用，因此它不是搜索次数或总费用上限。每次模型请求前，唯一系统消息都会更新当前轮次、此前已完成次数及本次之后的剩余次数。直接回答也是一次模型调用；到上限仍没有正常答案会报错，不自动强行总结。
 
-```powershell
-uv run python -X utf8 main.py "查找 Python 3.13 的主要改进，并提供官方来源" --verbose
-```
-
-过程按轮次以中文文本排版到 stderr，不保存日志文件，也不再倾倒原始 JSON：
-
-- 开始时显示一次用户问题。
-- 每轮显示轮次及模型收到的消息数量；隐藏固定系统提示词、工具 schema，不重印历史消息。
-- 模型调用工具时，非空的正常正文显示为“模型说明”；随后按同轮工具编号显示名称及解析后的参数。
-- 搜索成功时完整显示每条结果的标题、URL 和内容片段，保留实际换行；不同搜索返回相同内容也照常显示，不做跨搜索来源编号、去重或截断。
-- `think_tool` 的显式笔记只在参数区域显示一次；工具的机械回显简化为“研究笔记已记录”。参数错误及其他工具错误仍明确展示。
-- 工具结果追加到消息后显示“已写回上下文”和当前消息数量。全部工具执行后才进行下一轮模型调用。
-- 模型不调用工具并返回正常非空答案时，stderr 只显示“直接回答”和结束概况，答案正文仅通过 stdout 输出一次。
-- 达到上限、模型请求失败或中断时显示异常结束原因，不冒充正常答案。
-
-Tavily 展示的是处理后实际回传给模型的全部搜索片段，不是网页全文；同时显示收到、保留数量和各排除原因。不打印 `.env`、请求头、密钥或 `reasoning_content`，不请求隐藏推理。显式笔记、模型正常说明中的内容重叠不做语义删减，便于观察真实行为；显示副本中意外回显的本次密钥会被遮蔽。
-
-## 搜索结果结构与处理规则
-
-`tools.py` 用 `SearchResult`、`ProcessingInfo`、`SearchResponse` 三个 `TypedDict` 声明结果结构，`normalize_search_results()` 显式执行运行时校验；类型声明本身不提供运行时校验。
+## 搜索闭环
 
 ```text
-query: 非空字符串，保留实际请求查询
-results: [{title: 非空字符串, url: 非空字符串, content: 非空字符串}]
-processing: {received: 收到数量, kept: 保留数量, removed: {原因: 数量}}
-error: 可选，非空返回全部被过滤时说明没有可用证据
+用户问题 + Session 已完成历史
+→ 当前问题的临时副本
+→ DeepSeek 读取上下文和工具定义
+→ 生成工具调用或直接回答
+→ 执行工具，将统一操作结果写回 tool 消息
+→ 下一轮模型决策
+→ 正常答案后保存本次历史及页面快照
 ```
 
-处理顺序为：Tavily JSON → 检查顶层对象及 results 列表 → 逐条字段校验 → 保守文本整理 → 单次精确去重 → JSON 工具结果。正常原始空列表没有 `error`；缺少 results 或 results 类型错误沿用工具格式异常错误；条目全被排除时附上 `error` 和处理数量。
+不预先生成固定搜索清单，不强制搜索、读取、think 的调用顺序。不压缩历史，不将工具执行成功认证为结论正确。DeepSeek 内部 thinking 模式当前关闭，显式 think 工具与隐藏推理不同。
 
-- URL 必须是带主机的 HTTP(S) 字符串，拒绝内部空白、控制字符和非法端口。仅去掉首尾空白，不验证可访问性、不合并 www、不删除查询参数。
-- 正文必须是字符串，统一 CRLF/CR 为 LF 并去掉首尾空白；空正文排除。不删导航、不改写、不摘要、不截断。
-- 标题缺失、null 或空白时用 URL 代替；非字符串标题排除。非空标题仅整理换行和首尾空白。
-- 仅在单次调用内，整理后的 URL 和正文均相同时保留第一条。标题差异不影响判重；同 URL 不同正文、不同 URL 相同正文都保留，不进行跨轮次去重。
-- 每个坏条目仅计一个首要原因：`invalid_item`、`invalid_url`、`invalid_fields`、`empty_content` 或 `duplicate`。有效条目不会因其他坏条目而丢失。
+## 三个工具
 
-处理数量是工具结果的一部分，开关前后相同。没有引入 relevance threshold、域名质量筛选、rerank 或摘要模型。
+### tavily_search(query)
 
-所有显示内容都不写入 `messages`。开关不改变提示词、工具定义、搜索结果、请求内容或调用次数；事件只同步显示真实执行步骤，没有新增状态机或评估框架。mock 测试逐项比较开关前后的请求相等，这保证程序没有因开关改变决策输入，不保证两次真实模型运行的随机输出相同。
+使用 `basic`、最多 3 条结果，不请求 raw content 或 provider 生成的答案。返回 `query`、`results[{title,url,content}]` 和 `processing`。
 
-如果当前终端找不到 `uv`，将上述命令的 `uv` 替换为 `& "$env:USERPROFILE/.local/bin/uv.exe"`。项目将 uv 缓存放在已忽略的 `.uv-cache` 中，避免当前受限环境的全局缓存权限问题。
+`retrieval.py` 中的 `normalize_search_results()` 显式校验原始返回；TypedDict 只是结构声明，本身不提供运行时校验：
 
-## 内存 Session
+- 顶层必须是对象，results 必须为列表。
+- 无效 URL、非字符串正文/标题、空正文会被排除。缺失、null 或空标题用 URL 代替。
+- 只整理首尾空白和换行，不删除导航、不改写正文、不摘要。
+- 单次搜索内，整理后的 URL 和正文均相同才去重，保留第一次出现的顺序。同 URL 不同片段保留。
+- 不合并 www、不删除查询参数，不做跨轮次去重或重复搜索惩罚。
+- 坏条目只记首个排除原因，有效条目不受其他坏条目影响。
 
-`run_agent()` 可接收同一个 `Session`，让连续输入继承已完成的用户消息、assistant 正文、工具调用、工具结果和最终答案。不传 `session` 时自动使用临时会话，现有单次命令行为保持不变。
+### read_page(url, start=0)
 
-以下是同一 Python 进程内的调用示例；使用现有 `.env` 配置和 HTTP 客户端：
+通过 Tavily Extract 的 `basic` 提取指定 URL，返回 Markdown 文本，不搜索替代页面，不调用摘要模型。读取公开 HTTP(S) 文本网页，不支持登录、点击操作或本地文件。
 
-```python
-from pathlib import Path
-import httpx
-from agent import run_agent
-from main import read_config
-from session import Session
+- `start=0` 重新请求该页面，并在临时会话中保存内容快照。
+- 每次最多返回 24,000 字符；长页面给出 `next_start`，模型可用同一个 URL 和该起点继续读取。
+- 续读使用同一快照，不重复联网。结果包含 `snapshot_id`、`start/end`、总字符数及下一起点。
+- `success` 代表本次返回全部已提取文本；`partial` 代表只返回该快照的一段。最后一段也仍是 partial，只是 next_start 为空。
+- 请求地址和服务报告地址分别保留；Extract 没有提供可核实的最终重定向地址，`final_url` 为 null，不从报告地址猜测。
+- 返回全部提取文本不等于网站全文完整无缺。网页未记载也不等于现实中不存在该事实。
+- 新读取失败时不保留当前输入中的旧快照供续读；整次输入失败时 Session 仍回退到提问前。
+- 地址校验阻止本地文件、凭据 URL、localhost 和非公网 IP 字面量；这是请求形式校验，不是对 provider DNS 或重定向行为的安全认证。本机代理 DNS 不参与 provider 地址校验。
 
-config = read_config(Path(".env"))
-session = Session()
-with httpx.Client() as client:
-    for question in ("Python 3.13 有哪些主要改进？", "其中第一项有哪些限制？"):
-        answer = run_agent(
-            question, client=client, session=session,
-            model=config["DEEPSEEK_MODEL"],
-            deepseek_api_key=config["DEEPSEEK_API_KEY"],
-            tavily_api_key=config["TAVILY_API_KEY"],
-        )
-        print(answer)
-session.clear()
-```
+### think_tool
 
-每次提问深复制历史，更新唯一系统提示词的日期与循环上限，再追加新问题。仅正常返回非空最终答案后保存全部临时历史；请求失败、输出截断、空答案、超限或中断均保留提问前的历史。工具错误如果已回传给模型，且模型最终正常回答，则该错误也属于成功完成输入的历史。
+默认参数仍为 `reflection`，记录模型显式笔记。返回 `content_kind=model_note`，不是新增外部证据。
 
-每个新问题重新计算模型调用轮次。清空会话会移除所有旧问答和工具结果。不撤销已经发生的请求、费用或终端输出，不自动重试失败输入。
-
-`Session.messages` 由 Agent 维护，调用方不要手工插入不配对的工具消息；同一 Session 只供顺序调用，不支持并发提问。暂无持久化、自动裁剪或压缩，长会话可能触及模型上下文上限。进程退出后历史消失。
-
-启动 REPL 可在同一个进程内连续使用这个会话：
+可用独立实验开关切换结构：
 
 ```powershell
-uv run python -X utf8 main.py --repl
-uv run python -X utf8 main.py --repl --verbose
+uv run python -X utf8 main.py --repl --verbose --structured-think
 ```
 
-启动时读取一次 `.env`，创建一个 HTTP 客户端及一个 Session，循环接收输入并复用它们。每次输入等待回答结束后再输入下一问。
+实验字段为 `goal`（当前目标）、`observations`（实际观察）、`assessment`（判断与不确定性）、`next_step`（下一步及希望获得的信息）、`references`（已有搜索/读取的 tool_call_id，可为空）。只检查引用操作存在，不认证引用内容是否支持判断。失败操作也可以作为“尝试失败”的观察引用。模型仍可不调用 think 直接回答。
 
-- `/new`：清空历史，继续输入。
-- `/exit`：退出程序；EOF（Windows 可用 Ctrl+Z 后回车）也会退出。
-- 空白输入：忽略，不请求模型。未知斜杠命令提示可用命令。
-- 研究期间 Ctrl+C：取消当前问题，保留此前完成历史，返回输入提示。
-- 等待输入期间 Ctrl+C：退出 REPL。
-- 研究失败：显示错误后继续输入；配置错误则在启动时退出。
+结构化模式已完成真实调用验证，但尚未证明普遍提升答案质量，因此默认关闭。
 
-`--max-iterations` 对每个问题分别生效；`--verbose` 对本次启动的所有问题生效。`--repl` 不能同时附带单次问题。退出后不保存会话，反复执行单次 CLI 命令仍是独立会话。模型暂不流式输出。
+## 操作结果与显示
 
-## 无密钥验证
+三个工具共同返回 `operation`、`status`、`content_kind`；具体内容由各工具提供。
+
+|状态|含义|
+|---|---|
+|success|取得本次操作预期的数据或保存笔记；不表示结论已核实|
+|empty|搜索正常完成但无命中|
+|partial|读取返回了提取快照的一部分|
+|failed|请求失败、数据不合法、提取失败或所有搜索条目被排除|
+
+失败包含 `error_code` 和可读 `error`；API HTTP 状态与 provider 报告的页面失败原因分别表达。404 等可识别原因会保留，未知原因不猜测。认证错误正文和请求头不回传。
+
+`--verbose` 仅控制 stderr 显示：按轮次显示调用、参数、实际结果、读取范围、结果写回和预算。不打印系统提示词或历史副本；笔记不机械回显两遍；最终答案只写入 stdout。`display.py` 与模型消费同一份工具结果，显示不改变消息、工具参数或结果。API key 在显示副本中遮蔽，不输出 reasoning_content。
+
+## Session 与文件职责
+
+|文件|职责|
+|---|---|
+|agent.py|模型请求、工具循环、当前轮次、成功提交与失败回退|
+|tools.py|工具定义、参数校验和分派，选择笔记实验模式|
+|retrieval.py|Search/Extract 获取、结果整理、页面范围与快照|
+|operations.py|公共操作状态及失败结果构造|
+|display.py|终端事件展示，无研究决策|
+|session.py|已完成消息和页面快照的内存容器|
+|main.py|配置、单次命令、REPL 生命周期|
+|tests/|不联网的工程测试|
+
+`run_agent(..., session=同一个Session)` 可连续提问；不传时使用临时 Session。每次输入深复制消息和页面快照，只在正常取得非空答案后一起保存。请求失败、截断、空答案、超限或中断不保存本次临时数据。工具错误如果已回传且最终正常回答，则作为成功完成研究的一部分保留。
+
+一个 Session 只支持顺序调用；退出程序后丢失。`Session.clear()` 同时清空消息与页面快照。研究笔记已经保存在对应 assistant/tool 消息中，没有额外可失同步的笔记数据库。长会话仍可能超过模型上下文限制。
+
+## 验证
 
 ```powershell
 uv run python -X utf8 -m unittest discover -s tests -v
 ```
 
-测试只替换 HTTP 传输，实际执行 `run_agent` 和两个工具。动态搜索测试分别返回「青松」和「白桦」，模拟模型必须从已收到的结果中取得对应名称，再发起不同的第二次搜索；同时断言旧消息完整保留、工具结果编号正确和最终答案及时结束。这证明循环能传递决策所需的信息，不代表真实模型在所有问题上都会做出正确判断。
+测试覆盖动态搜索、消息配对、参数与结果校验、分页快照、失败原因、预算、Session 回退、REPL、显示开关不改变请求以及笔记引用。真实验收记录见 `docs/harness-validation.md`，区分功能验证与模型回答质量。
 
-## 边界和 API 依据
+## 指导项目和范围
 
-- 上限按模型请求次数计算，搜索和 think 都会消耗决策轮次；一轮可能包含多个工具调用，按顺序执行。到上限仍未回答时返回错误和退出码 1，不额外请求模型强行总结。
-- Tavily 每次最多返回 3 个结果，使用 `basic` 搜索；保留结果的标题、URL、内容片段，不获取网页全文，不再用模型压缩。空结果同样回传给模型。
-- 搜索失败或错误工具参数作为 tool 错误回传，供下一轮决策；DeepSeek 请求失败、空答案或截断则停止。没有自动重试框架。
-- 所有消息始终保留，因此较长研究仍可能超过模型上下文限制。本版不增加自动裁剪或压缩。
-- 引用来源和及时停止由提示词引导，未实现事实核验或引用校验器。
-- DeepSeek 采用 [Chat Completions 工具调用协议](https://api-docs.deepseek.com/guides/tool_calls/)，显式设置 `thinking.type=disabled`，降低第一版协议复杂度；这是模型内部模式，与应用的 `think_tool` 不同。模式参数见 [Thinking Mode](https://api-docs.deepseek.com/guides/thinking_mode/)。Tavily 请求字段及结果形状见 [Search API](https://docs.tavily.com/documentation/api-reference/endpoint/search)。
-- 自动测试使用 mock；已完成真实 DeepSeek/Tavily 搜索闭环和 REPL 连续两问的会话记忆验证。尚未做系统性的回答质量或费用评估；真实运行成功不代表所有问题都能准确回答。
+参考 `langchain-ai/deep_research_from_scratch` 提交 `93f35e5d2a51590f9542207a9ff66a01901da5bc` 的 Notebook 2、research_agent.py、utils.py、state_research.py。保留“模型自主决策 → 工具结果写回 → 再决策”的核心；用内存列表维护消息，用普通 Python 执行循环。
+
+当前没有照搬上游逐网页模型摘要及研究结束压缩。明确 URL 读取是实验支持的能力补充，采用 Tavily Extract；没有加入多 Agent、MCP、数据库、持久化、LangSmith、rerank 或大型评估框架。
+
+官方协议：
+- [DeepSeek 工具调用](https://api-docs.deepseek.com/guides/tool_calls/)
+- [Tavily Search](https://docs.tavily.com/documentation/api-reference/endpoint/search)
+- [Tavily Extract](https://docs.tavily.com/documentation/api-reference/endpoint/extract)

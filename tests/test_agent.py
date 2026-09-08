@@ -63,10 +63,10 @@ class AgentTests(unittest.TestCase):
                     self.assertEqual(body["model"], "test-deepseek")
                     self.assertEqual(body["thinking"], {"type": "disabled"})
                     self.assertEqual({t["function"]["name"] for t in body["tools"]},
-                                     {"tavily_search", "think_tool"})
+                                     {"tavily_search", "think_tool", "read_page"})
                     messages = body["messages"]
                     if histories:
-                        self.assertEqual(messages[:len(histories[-1])], histories[-1])
+                        self.assertEqual(messages[1:len(histories[-1])], histories[-1][1:])
                     histories.append(messages)
                     turn = len(histories)
                     if turn == 1:
@@ -79,7 +79,7 @@ class AgentTests(unittest.TestCase):
                         return reply(calls=[call("think_tool", {"reflection": f"缺少 {found} 版本详情"}, "think")])
                     if turn == 3:
                         # 后续搜索词从收到的工具结果提取，不由被测循环预先安排。
-                        found = messages[-1]["content"].split("缺少 ")[1].split(" 版本")[0]
+                        found = json.loads(messages[-1]["content"])["note"].split("缺少 ")[1].split(" 版本")[0]
                         return reply(calls=[call("tavily_search", {"query": f"{found} 版本详情"}, "search2")])
                     self.assertIn("版本 2 已发布", messages[-1]["content"])
                     return reply("版本 2 已发布。[发布说明](https://example.org/release)")

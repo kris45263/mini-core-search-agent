@@ -24,13 +24,14 @@ def read_config(path: Path) -> dict[str, str]:
 
 
 def run_question(question: str, *, client: httpx.Client, config: dict,
-                 session: Session, max_iterations: int, verbose: bool) -> int:
+                 session: Session, max_iterations: int, verbose: bool, structured_think: bool = False) -> int:
     """执行一个问题并报告错误；失败时由调用者决定退出还是继续输入。"""
     try:
         answer = run_agent(
             question, client=client, session=session, model=config["DEEPSEEK_MODEL"],
             deepseek_api_key=config["DEEPSEEK_API_KEY"], tavily_api_key=config["TAVILY_API_KEY"],
             max_iterations=max_iterations, verbose=verbose,
+            structured_think=structured_think,
         )
         print(answer, flush=True)
         return 0
@@ -56,6 +57,7 @@ def main() -> int:
     parser.add_argument("--repl", action="store_true", help="启动可连续输入的内存会话")
     parser.add_argument("--max-iterations", type=int, default=12, help="每个问题最多模型决策次数，默认 12")
     parser.add_argument("--verbose", action="store_true", help="在 stderr 显示研究过程")
+    parser.add_argument("--structured-think", action="store_true", help="实验：使用结构化显式研究笔记")
     args = parser.parse_args()
     if args.repl == (args.question is not None):
         parser.error("请提供一个问题，或使用 --repl；两者不能同时使用")
@@ -70,7 +72,7 @@ def main() -> int:
     with httpx.Client() as client:
         if not args.repl:
             return run_question(args.question, client=client, config=config, session=session,
-                                max_iterations=args.max_iterations, verbose=args.verbose)
+                                max_iterations=args.max_iterations, verbose=args.verbose, structured_think=args.structured_think)
         print("REPL 已启动。/new 清空会话，/exit 退出。", file=sys.stderr)
         while True:
             try:
@@ -92,7 +94,7 @@ def main() -> int:
                 continue
             # run_question 报告失败后返回；Session 保留此前成功历史，继续等待输入。
             run_question(question, client=client, config=config, session=session,
-                         max_iterations=args.max_iterations, verbose=args.verbose)
+                         max_iterations=args.max_iterations, verbose=args.verbose, structured_think=args.structured_think)
 
 
 if __name__ == "__main__":
