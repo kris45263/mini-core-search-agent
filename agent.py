@@ -1,5 +1,6 @@
 """最小搜索 Agent 闭环：完整消息历史、模型自主工具决策和有界迭代。"""
 
+from collections.abc import Callable
 from datetime import date
 from copy import deepcopy
 
@@ -8,11 +9,15 @@ import httpx
 from tools import tool_definitions, execute_tool
 from display import make_emitter
 from session import Session
+from deepseek import stream_chat_completion
 
 
 SYSTEM_PROMPT = """你是搜索研究助手。今天是 {today}。
 根据用户问题和全部研究消息，自主决定下一步：搜索、整理笔记或直接回答。
 需要外部事实时调用 tavily_search；先做合适的搜索，再根据实际结果调整查询。
+根据任务选择搜索 max_results（1–10，省略默认3）：精确定位用少量候选，多来源比较可增加。
+用户指定官网或来源且域名已明确时，可用 include_domains 限定；域名不清楚时先发现核实，不猜测。
+已有明确目标 URL 时可直接 read_page；来源片段不足以支持精确结论时优先读取合适页面，证据足够则回答。
 需要整理或改变研究方向时，可使用 think_tool 记录观察、判断和下一步；它不是外部证据。
 已知具体页面而片段不够时，可使用 read_page 取得正文。读取状态只表示获取情况，不认证结论。
 搜索片段、提取正文、模型笔记是不同的信息来源；使用实际返回的地址，不把推导的地址当作已读取。
@@ -30,6 +35,8 @@ def run_agent(
     verbose: bool = False,
     session: Session | None = None,
     structured_think: bool = False,
+    on_content: Callable[[str], None] | None = None,
+    on_event: Callable[..., None] | None = None,
 ) -> str:
     """运行一次研究并返回最终文本；达到上限或模型异常时明确报错。
 
@@ -38,7 +45,13 @@ def run_agent(
     一次迭代指一次模型请求，同一响应中的工具调用按顺序全部执行。
     verbose 只向 stderr 打印进度，不向消息历史中添加内容。
     """
-    emit = make_emitter(verbose, (deepseek_api_key, tavily_api_key))
+    debug = make_emitter(verbose, (deepseek_api_key, tavily_api_key))
+
+    def emit(event: str, **details) -> None:
+        if on_event is not None:
+            on_event(event, **details)
+        if event != "model_response" or on_content is None:
+            debug(event, **details)
 
     if not question.strip():
         raise ValueError("用户问题不能为空")
@@ -69,16 +82,10 @@ def run_agent(
                            f"此前已完成 {iteration} 次，本次之后最多还能调用 {max_iterations - iteration - 1} 次。"
                            "轮次指模型调用，不是搜索次数。你可以直接回答或说明已知与未确定的部分。"}
             emit("model_call", round=iteration + 1, message_count=len(messages), remaining=max_iterations - iteration - 1)
-            response = client.post(
-                "https://api.deepseek.com/chat/completions",
-                headers={"Authorization": f"Bearer {deepseek_api_key}"},
-                json={"model": model, "messages": messages, "tools": definitions,
-                      "tool_choice": "auto", "thinking": {"type": "disabled"},
-                      "max_tokens": 8192, "stream": False},
-                timeout=60,
+            choice = stream_chat_completion(
+                client=client, model=model, api_key=deepseek_api_key,
+                messages=messages, tools=definitions, on_content=on_content,
             )
-            response.raise_for_status()
-            choice = response.json()["choices"][0]
             # 仅展示正常正文和显式工具调用，不转储 reasoning_content 或请求头。
             message = choice["message"]
             if not isinstance(message, dict) or message.get("role") != "assistant":

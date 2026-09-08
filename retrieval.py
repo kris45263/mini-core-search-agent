@@ -2,6 +2,7 @@
 
 import hashlib
 import ipaddress
+import re
 from typing import NotRequired, TypedDict
 from urllib.parse import urlsplit
 
@@ -32,6 +33,7 @@ class SearchResponse(OperationResult):
     results: list[SearchResult]
     processing: ProcessingInfo
     error: NotRequired[str]
+    search_parameters: NotRequired[dict]
 
 
 def normalize_search_results(query: str, response: object) -> SearchResponse:
@@ -113,14 +115,40 @@ def retrieval_error(operation: str, exc: Exception) -> dict:
     return failure(operation, "invalid_response", "Tavily 返回的数据格式异常。")
 
 
-def tavily_search(query: str, *, client: httpx.Client, api_key: str) -> dict:
+def tavily_search(query: str, *, client: httpx.Client, api_key: str,
+                  max_results: int = 3, include_domains: list[str] | None = None) -> dict:
     """返回搜索片段和处理数量；不隐式读取每个网页或改变来源排序。"""
+    if not isinstance(query, str) or not query.strip():
+        raise ValueError('query 必须为非空字符串')
+    if type(max_results) is not int or not 1 <= max_results <= 10:
+        raise ValueError('max_results 必须为 1–10 的整数')
+    domains = []
+    if include_domains is not None:
+        if not isinstance(include_domains, list) or len(include_domains) > 10:
+            raise ValueError('include_domains 必须为最多 10 个域名的列表')
+        for value in include_domains:
+            if not isinstance(value, str):
+                raise ValueError('include_domains 中每项必须为域名字符串')
+            domain = value.strip().lower()
+            labels = domain.split('.')
+            if (len(domain) > 253 or len(labels) < 2
+                    or any(not re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', label) for label in labels)
+                    or domain.endswith(('.localhost', '.local')) or labels[-1].isdigit()):
+                raise ValueError('include_domains 只接受公开域名，不接受 URL、路径、IP 或通配符')
+            if domain not in domains:
+                domains.append(domain)
+    parameters = {'search_depth': 'basic', 'max_results': max_results,
+                  'include_answer': False, 'include_raw_content': False}
+    if domains:
+        parameters.update(include_domains=domains, include_domains_mode='filter')
     try:
-        raw = request_tavily("search", {"query": query, "search_depth": "basic", "max_results": 3,
-                             "include_answer": False, "include_raw_content": False}, client=client, api_key=api_key)
-        return normalize_search_results(query, raw)
+        raw = request_tavily('search', {'query': query, **parameters}, client=client, api_key=api_key)
+        result = normalize_search_results(query, raw)
     except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
-        return retrieval_error("tavily_search", exc)
+        result = retrieval_error('tavily_search', exc)
+        result['query'] = query
+    result['search_parameters'] = parameters
+    return result
 
 
 def valid_page_url(url: str) -> bool:

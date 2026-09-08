@@ -9,6 +9,7 @@ import httpx
 
 from agent import run_agent
 from session import Session
+from display import AgentDisplay
 
 
 def read_config(path: Path) -> dict[str, str]:
@@ -26,14 +27,15 @@ def read_config(path: Path) -> dict[str, str]:
 def run_question(question: str, *, client: httpx.Client, config: dict,
                  session: Session, max_iterations: int, verbose: bool, structured_think: bool = False) -> int:
     """执行一个问题并报告错误；失败时由调用者决定退出还是继续输入。"""
+    view = AgentDisplay(verbose, secrets=(config['DEEPSEEK_API_KEY'], config['TAVILY_API_KEY']))
     try:
-        answer = run_agent(
+        run_agent(
             question, client=client, session=session, model=config["DEEPSEEK_MODEL"],
             deepseek_api_key=config["DEEPSEEK_API_KEY"], tavily_api_key=config["TAVILY_API_KEY"],
             max_iterations=max_iterations, verbose=verbose,
             structured_think=structured_think,
+            on_content=view.content, on_event=view.event,
         )
-        print(answer, flush=True)
         return 0
     except (ValueError, RuntimeError) as exc:
         print(f"错误：{exc}", file=sys.stderr)
@@ -45,8 +47,12 @@ def run_question(question: str, *, client: httpx.Client, config: dict,
     except (KeyError, IndexError, TypeError):
         print("错误：DeepSeek 返回的数据格式异常。", file=sys.stderr)
     except KeyboardInterrupt:
-        print("研究已中断。", file=sys.stderr)
+        print("已取消。本次问答不会加入后续对话。", file=sys.stderr)
         return 130
+    except (OSError, UnicodeError):
+        print("终端输出失败，已停止当前任务。", file=sys.stderr)
+        return 74
+    print("本次回答未完成，本次问答不会加入后续对话。", file=sys.stderr)
     return 1
 
 
@@ -76,7 +82,8 @@ def main() -> int:
         print("REPL 已启动。/new 清空会话，/exit 退出。", file=sys.stderr)
         while True:
             try:
-                question = input("你：").strip()
+                print("你：", end="", file=sys.stderr, flush=True)
+                question = input().strip()
             except (EOFError, KeyboardInterrupt):
                 print("\n会话已结束。", file=sys.stderr)
                 return 0
@@ -87,14 +94,16 @@ def main() -> int:
                 return 0
             if question == "/new":
                 session.clear()
-                print("已清空会话。", file=sys.stderr)
+                print("已开始新对话。", file=sys.stderr)
                 continue
             if question.startswith("/"):
                 print("未知命令。可用命令：/new、/exit。", file=sys.stderr)
                 continue
             # run_question 报告失败后返回；Session 保留此前成功历史，继续等待输入。
-            run_question(question, client=client, config=config, session=session,
+            status = run_question(question, client=client, config=config, session=session,
                          max_iterations=args.max_iterations, verbose=args.verbose, structured_think=args.structured_think)
+            if status == 74:
+                return status
 
 
 if __name__ == "__main__":

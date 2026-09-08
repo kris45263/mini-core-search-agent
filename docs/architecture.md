@@ -16,9 +16,11 @@
 
 ## 三个工具
 
-### tavily_search(query)
+### tavily_search(query, max_results=3, include_domains=None)
 
-使用 `basic`、最多 3 条结果，不请求 raw content 或 provider 生成的答案。返回 `query`、`results[{title,url,content}]` 和 `processing`。
+使用 `basic`，模型可选择 1–10 条候选，省略默认 3，不请求 raw content 或 provider 生成的答案。可选 include_domains 最多 10 个域名，空列表或省略不限制；仅接受明确 ASCII 主机名，不含协议、路径、IP 或通配符，规范化空白/大小写并去重。有域名时明确发送 include_domains_mode=filter，不自动退回全网。返回 query、results[{title,url,content}]、processing 和实际 search_parameters；API 失败也保留有效请求参数供核查。参数不合法在联网前作为 invalid_arguments 回传模型。
+
+模型根据任务选择数量和域名，不新增用户开关；这提供检索控制能力，不保证模型每次都会选择最优参数。普通显示直接使用 provider 标题和 URL，模型历史与内容不因显示清理而改变。标题和链接在显示副本中遮蔽配置密钥及终端控制字符，原始正文不做语义去噪。
 
 `retrieval.py` 中的 `normalize_search_results()` 显式校验原始返回；TypedDict 只是结构声明，本身不提供运行时校验：
 
@@ -69,13 +71,24 @@ uv run python -X utf8 main.py --repl --verbose --structured-think
 
 失败包含 `error_code` 和可读 `error`；API HTTP 状态与 provider 报告的页面失败原因分别表达。404 等可识别原因会保留，未知原因不猜测。认证错误正文和请求头不回传。
 
-`--verbose` 仅控制 stderr 显示：按轮次显示调用、参数、实际结果、读取范围、结果写回和预算。不打印系统提示词或历史副本；笔记不机械回显两遍；最终答案只写入 stdout。`display.py` 与模型消费同一份工具结果，显示不改变消息、工具参数或结果。API key 在显示副本中遮蔽，不输出 reasoning_content。
+普通界面向 stderr 显示“正在思考/搜索/读取网页/整理信息”等简短状态；`--verbose` 额外显示轮次、参数、实际结果、读取范围、结果写回和预算。正文增量写 stdout，模型工具前说明也会显示，不在完成后重复输出。内部工具 JSON 不进入普通正文，隐藏 reasoning_content 不展示。详细调试显示副本遮蔽 API key，stdout 正文保留原文。
+
+`deepseek.py` 使用同步 SSE 接收，按工具 index 累计独立调用，完整 finish_reason 和 DONE 后校验所有调用，再交给 `agent.py` 依次执行。流式消息不逐片写入历史。无工具验收与主 Agent 共用该接收器，不创建第二套 Agent 核心。模型响应完成事件先结束正文行，再显示工具状态；整个问题仍仅在成功答案后提交 Session。
+
+工具 id/type/name 必须保持一致，arguments 字符串累计后交给 execute_tool 解析；整轮所有调用结构通过校验后才执行第一个工具。正常结束为 stop 且正文非空、无工具，或 tool_calls 且工具完整。缺 DONE、截断、协议异常或网络中断均失败，不自动重试、不退回非流式。
+
+run_agent 的 on_content 回调逐段通知正文，on_event 通知模型/工具生命周期；函数仍返回完整最终答案。不传回调的程序调用者可以只消费返回值。CLI 不重复 print 返回答案。已显示文字无法撤回，stdout 重定向可能保留工具前说明或失败残稿。
+
+“正在思考”是界面状态，不能推断模型启用了 thinking。verbose 的首段正文时间从本轮模型调用事件到首个含非空白字符片段写入并 flush 后计算，是显示提交时刻的近似值，不是精确屏幕渲染时刻；总耗时包含等待与接收，片段数单位为段，不等于 token 数。程序没有人为限速。
+
+未增加独立 chat/stream 产品开关，不实现关键词去噪、语义去重或额外来源数据库。事实依据和保留问题见 [研究结论](retrieval-findings.md)，运行证据见 [验收记录](harness-validation.md)。
 
 ## Session 与文件职责
 
 |文件|职责|
 |---|---|
 |agent.py|模型请求、工具循环、当前轮次、成功提交与失败回退|
+|deepseek.py|共享流式接收、消息组装、结束校验与连接释放|
 |tools.py|工具定义、参数校验和分派，选择笔记实验模式|
 |retrieval.py|Search/Extract 获取、结果整理、页面范围与快照|
 |operations.py|公共操作状态及失败结果构造|

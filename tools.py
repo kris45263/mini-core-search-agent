@@ -17,7 +17,12 @@ TOOLS = [
             "description": "搜索网络获取新信息。根据当前信息缺口提出一个查询，返回标题、链接及内容片段。",
             "parameters": {
                 "type": "object",
-                "properties": {"query": {"type": "string", "description": "本次搜索词"}},
+                "properties": {
+                    "query": {"type": "string", "description": "本次搜索词"},
+                    "max_results": {"type": "integer", "minimum": 1, "maximum": 10,
+                                    "description": "本次候选结果上限，默认3；多来源比较可增加，精确定位可减少。"},
+                    "include_domains": {"type": "array", "maxItems": 10, "items": {"type": "string"},
+                                        "description": "可选来源域名限制，例如 api-docs.deepseek.com；仅明确域名，不含协议/路径/通配符。省略或空列表不限制；不要猜测官网域名。"}},
                 "required": ["query"],
                 "additionalProperties": False,
             },
@@ -84,12 +89,17 @@ def execute_tool(tool_call: dict, *, client: httpx.Client, api_key: str,
             if not isinstance(refs, list) or any(not isinstance(ref, str) or (known_operations or {}).get(ref) not in {"tavily_search", "read_page"} for ref in refs):
                 raise ValueError("references 必须引用实际已有的搜索或读取操作编号")
             result = {"operation": name, "status": "success", "content_kind": "model_note", "note": args}
-        elif name in {"tavily_search", "think_tool"}:
-            key = "query" if name == "tavily_search" else "reflection"
+        elif name == 'tavily_search':
+            if not {'query'} <= set(args) <= {'query', 'max_results', 'include_domains'}:
+                raise ValueError('搜索需要 query，可选 max_results 和 include_domains')
+            if 'include_domains' in args and not isinstance(args['include_domains'], list):
+                raise ValueError('include_domains 必须为域名列表')
+            result = tavily_search(**args, client=client, api_key=api_key)
+        elif name == "think_tool":
+            key = "reflection"
             if set(args) != {key} or not isinstance(args[key], str) or not args[key].strip():
                 raise ValueError(f"参数必须且只能包含非空字符串 {key}")
-            result = (tavily_search(args[key], client=client, api_key=api_key) if name == "tavily_search" else
-                      {"operation": name, "status": "success", "content_kind": "model_note", "note": args[key]})
+            result = {"operation": name, "status": "success", "content_kind": "model_note", "note": args[key]}
         else:
             raise ValueError("未知工具")
     except (ValueError, TypeError) as exc:

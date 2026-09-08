@@ -14,6 +14,7 @@ import httpx
 from agent import run_agent
 from main import read_config
 from session import Session
+from display import AgentDisplay
 
 
 def main() -> int:
@@ -48,11 +49,13 @@ def main() -> int:
     start = time.monotonic()
     answer = None
     error = None
+    view = AgentDisplay(secrets=(config['DEEPSEEK_API_KEY'], config['TAVILY_API_KEY']))
     try:
         with httpx.Client(event_hooks={"request": [capture]}) as client:
             answer = run_agent(case["question"], client=client, model=config["DEEPSEEK_MODEL"],
                                deepseek_api_key=config["DEEPSEEK_API_KEY"], tavily_api_key=config["TAVILY_API_KEY"],
-                               session=session, structured_think=case["structured_think"])
+                               session=session, structured_think=case["structured_think"],
+                               on_content=view.content, on_event=view.event)
     except (Exception, KeyboardInterrupt) as exc:
         error = type(exc).__name__
     trace = []
@@ -66,8 +69,10 @@ def main() -> int:
                           "error": result.get("error"), "requested_url": result.get("requested_url"),
                           "url": result.get("url"), "start": result.get("start"), "end": result.get("end"),
                           "next_start": result.get("next_start"),
+                          "content": result.get("content"),
+                          "query": result.get("query"), "search_parameters": result.get("search_parameters"),
                           "sources": [{"url": row["url"], "title": row["title"]} for row in result.get("results", [])]})
-    record = {**case, "model": config["DEEPSEEK_MODEL"], "max_iterations": 12, "model_calls": model_calls,
+    record = {**case, "model": config["DEEPSEEK_MODEL"], "streaming": True, "max_iterations": 12, "model_calls": model_calls,
               "seconds": round(time.monotonic() - start, 2), "answer": answer, "error": error, "trace": trace,
               "judgment": "待人工按 docs/testing/plan.md 核对；正常退出不等于答案正确。"}
     text = json.dumps(record, ensure_ascii=False, indent=2)

@@ -15,11 +15,15 @@ import httpx
 
 def reply(content=None, calls=None, finish=None):
     """构造 DeepSeek Chat Completions 的关键响应字段。"""
-    return httpx.Response(200, json={
-        "choices": [{"finish_reason": finish or ("tool_calls" if calls else "stop"),
-                     "message": {"role": "assistant", "content": content,
-                                 "tool_calls": calls}}],
-    })
+    delta = {"role": "assistant", "content": content}
+    if calls:
+        delta["tool_calls"] = [{"index": n, **c} for n, c in enumerate(calls)]
+    delta["reasoning_content"] = "隐藏推理不可展示"
+    data = {"choices": [{"index": 0, "delta": delta,
+                        "finish_reason": finish or ("tool_calls" if calls else "stop")}]}
+    return httpx.Response(200, headers={"content-type": "text/event-stream"},
+                          content="data: " + json.dumps(data, ensure_ascii=False) + "\n\ndata: [DONE]\n\n")
+
 
 
 def call(name, arguments, identifier="call_1"):
@@ -272,9 +276,7 @@ class VerboseTests(unittest.TestCase):
                 messages = body["messages"]
                 if len(messages) == 2:
                     response = reply("我先查官方资料。", calls=[call("tavily_search", {"query": "Python 官方改进"})])
-                    data = response.json()
-                    data["choices"][0]["message"]["reasoning_content"] = "隐藏推理不可展示"
-                    return httpx.Response(200, json=data)
+                    return response
                 if len(messages) == 4:
                     data = json.loads(messages[-1]["content"])
                     self.assertEqual(data["processing"]["removed"], {"duplicate": 1, "empty_content": 1})
@@ -290,10 +292,10 @@ class VerboseTests(unittest.TestCase):
                  redirect_stdout(out), redirect_stderr(err):
                 status = main()
                 self.assertEqual(status, 0, err.getvalue())
-            self.assertEqual(out.getvalue(), "这是测试用的答案正文。\n")
+            self.assertEqual(out.getvalue(), "我先查官方资料。\n这是测试用的答案正文。\n")
             if verbose:
                 for expected in ("Python 官方改进", "https://example.org", "资料",
-                                 "内部笔记正文", "我先查官方资料。"):
+                                 "内部笔记正文"):
                     self.assertIn(expected, err.getvalue())
                 for hidden in ("fake-ds", "fake-tv", "隐藏推理不可展示", "reasoning_content",
                                "这是测试用的答案正文。", "你是搜索研究助手", "additionalProperties"):
@@ -305,10 +307,11 @@ class VerboseTests(unittest.TestCase):
                 self.assertIn("URL 与正文完全重复 1 条", err.getvalue())
                 self.assertIn("空正文 1 条", err.getvalue())
                 self.assertIn("模型决定：直接回答", err.getvalue())
-                for unique in ("Python 官方改进", "https://example.org", "内部笔记正文", "我先查官方资料。"):
-                    self.assertEqual(err.getvalue().count(unique), 1)
+                for unique in ("Python 官方改进", "https://example.org", "内部笔记正文"):
+                    self.assertEqual(err.getvalue().count(unique), 2 if unique in {"Python 官方改进", "https://example.org"} else 1)
             else:
-                self.assertEqual(err.getvalue(), "")
+                self.assertIn("正在思考", err.getvalue())
+                self.assertNotIn("上下文", err.getvalue())
             runs.append(requests)
         self.assertEqual(runs[0], runs[1])
 

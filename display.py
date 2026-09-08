@@ -2,6 +2,124 @@
 
 import json
 import sys
+import time
+import unicodedata
+
+
+def display_text(value: object, secrets: tuple[str, ...] = (), *, single_line: bool = False) -> str:
+    """只处理显示副本：遮蔽密钥与终端控制字符，不改证据或模型消息。"""
+    text = str(value)
+    for secret in secrets:
+        if secret:
+            text = text.replace(secret, '[已隐藏密钥]')
+    text = ''.join(c if c in '\n\t' or unicodedata.category(c) not in {'Cc', 'Cf'}
+                   else f'\\u{ord(c):04x}' for c in text)
+    return ' '.join(text.splitlines()) if single_line else text
+
+
+class TextStreamWriter:
+    """正文逐段写入并刷新；与可忽略写入故障的调试展示不同。"""
+
+    def __init__(self):
+        """绑定当前 stdout，记录终端行状态。"""
+        self.output = sys.stdout
+        self.needs_newline = False
+
+    def write(self, text: str) -> None:
+        """原样输出非空片段，写入或刷新失败向上传播。"""
+        if text:
+            self.output.write(text)
+            self.needs_newline = not text.endswith("\n")
+            self.output.flush()
+
+    def finish(self) -> None:
+        """必要时补换行，重复调用不会重复输出。"""
+        if self.needs_newline:
+            self.write("\n")
+
+
+class AgentDisplay:
+    """普通状态与模型正文；性能数字仅在 verbose 下显示。"""
+
+    def __init__(self, verbose: bool = False, secrets: tuple[str, ...] = ()):
+        self.writer = TextStreamWriter()
+        self.verbose = verbose
+        self.started = None
+        self.first = None
+        self.fragments = 0
+        self.secrets = secrets
+
+    def content(self, text: str) -> None:
+        """立即展示正文；记录首段可见字符写入刷新的近似时刻。"""
+        self.writer.write(text)
+        self.fragments += 1
+        if self.first is None and text.strip():
+            self.first = time.monotonic()
+
+    def event(self, event: str, **details) -> None:
+        """只由真实模型/工具事件触发状态，不写进模型上下文。"""
+        text = None
+        if event == 'model_call':
+            self.started = time.monotonic()
+            self.first = None
+            self.fragments = 0
+            text = '正在思考…'
+        elif event == 'model_response':
+            self.writer.finish()
+            if self.verbose and self.started is not None:
+                elapsed = time.monotonic() - self.started
+                first = f'{self.first - self.started:.3f} 秒' if self.first is not None else '无正文'
+                text = f'本轮模型：首段正文 {first}，总耗时 {elapsed:.3f} 秒，正文片段 {self.fragments} 段。'
+        elif event == 'tool_call':
+            name = details['tool_call']['function']['name']
+            text = {'tavily_search': '正在搜索…', 'read_page': '正在读取网页…',
+                    'think_tool': '正在整理信息…'}.get(name, '正在执行工具…')
+            try:
+                args = json.loads(details['tool_call']['function']['arguments'])
+                if isinstance(args, dict):
+                    if name == 'tavily_search':
+                        text += '\n搜索词：' + display_text(args.get('query', ''), self.secrets, single_line=True)
+                        domains = args.get('include_domains')
+                        if isinstance(domains, list) and domains:
+                            text += '\n限定来源：' + display_text('、'.join(map(str, domains)), self.secrets, single_line=True)
+                    elif name == 'read_page':
+                        start = args.get('start', 0)
+                        if type(start) is int and start > 0:
+                            text = '正在续读已有页面内容…'
+                        text += '\n' + display_text(args.get('url', ''), self.secrets, single_line=True)
+            except (ValueError, TypeError):
+                pass
+        elif event == 'tool_result':
+            try:
+                result = json.loads(details['result'])
+                status = result.get('status')
+                if status == 'failed':
+                    text = '本次工具未能完成，继续根据已有信息处理。'
+                elif details['tool_name'] == 'tavily_search':
+                    text = '未找到相关结果。' if status == 'empty' else f"找到 {len(result.get('results', []))} 条结果。"
+                    for number, row in enumerate(result.get('results', []), 1):
+                        title = display_text(row.get('title') or row.get('url', ''), self.secrets, single_line=True)
+                        url = display_text(row.get('url', ''), self.secrets, single_line=True)
+                        text += f'\n  {number}. {title}\n     {url}'
+                elif details['tool_name'] == 'read_page':
+                    if status == 'partial':
+                        text = ('已取得本次提取内容的最后一部分。' if result.get('next_start') is None
+                                else '已取得本次提取内容的一部分，可继续读取。')
+                    else:
+                        text = '已取得页面文本。'
+                    text += '\n' + display_text(result.get('title') or result.get('url', ''), self.secrets, single_line=True)
+            except (ValueError, TypeError, AttributeError):
+                text = '工具已返回结果。'
+        elif event == 'end':
+            try:
+                self.writer.finish()
+            except (OSError, UnicodeError):
+                pass  # 保留原始异常，不在异常清理时再次写坏掉的 stdout。
+        if text:
+            try:
+                print(display_text(text, self.secrets), file=sys.stderr, flush=True)
+            except (OSError, UnicodeError):
+                pass
 
 
 def make_emitter(verbose: bool, secrets: tuple[str, ...]):
@@ -82,11 +200,8 @@ def make_emitter(verbose: bool, secrets: tuple[str, ...]):
         else:
             return
         # 即使显式输出意外回显了本次密钥，也只在终端副本中遮蔽。
-        for secret in secrets:
-            if secret:
-                text = text.replace(secret, "[已隐藏密钥]")
         try:
-            print(text, file=sys.stderr, flush=True)
+            print(display_text(text, secrets), file=sys.stderr, flush=True)
         except (OSError, UnicodeError):
             # 观察输出不可用时继续原有研究，避免开关影响实际请求。
             pass
