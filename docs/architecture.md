@@ -1,5 +1,7 @@
 # 模块与数据约定
 
+业务模块位于 `src/seekra/`，使用包内相对导入。`seekra` 和 `python -m seekra` 共用 `seekra.cli:main`；`uv sync` 安装项目后即可使用 `uv run seekra`。CLI 默认读取当前工作目录的 `.env`，或通过 `--env-file` 显式选择；不会自动读取安装目录的配置。命令入口统一配置 UTF-8 输入输出，`--help` 和 `--version` 不需要密钥。REPL 使用 `› ` 输入提示，支持 `/help`、`/new`、`/exit`。包装层不修改模型提示词、工具定义或研究决策。
+
 ## 搜索闭环
 
 ```text
@@ -51,7 +53,7 @@
 可用独立实验开关切换结构：
 
 ```powershell
-uv run python -X utf8 main.py --repl --verbose --structured-think
+uv run seekra --repl --verbose --structured-think
 ```
 
 实验字段为 `goal`（当前目标）、`observations`（实际观察）、`assessment`（判断与不确定性）、`next_step`（下一步及希望获得的信息）、`references`（已有搜索/读取的 tool_call_id，可为空）。只检查引用操作存在，不认证引用内容是否支持判断。失败操作也可以作为“尝试失败”的观察引用。模型仍可不调用 think 直接回答。
@@ -94,7 +96,7 @@ run_agent 的 on_content 回调逐段通知正文，on_event 通知模型/工具
 |operations.py|公共操作状态及失败结果构造|
 |display.py|终端事件展示，无研究决策|
 |session.py|已完成消息和页面快照的内存容器|
-|main.py|配置、单次命令、REPL 生命周期|
+|cli.py|配置、单次命令、REPL 生命周期|
 |tests/|不联网的工程测试|
 
 `run_agent(..., session=同一个Session)` 可连续提问；不传时使用临时 Session。每次输入深复制消息和页面快照，只在正常取得非空答案后一起保存。请求失败、截断、空答案、超限或中断不保存本次临时数据。工具错误如果已回传且最终正常回答，则作为成功完成研究的一部分保留。

@@ -7,14 +7,13 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 import httpx
 
-from agent import run_agent
-from main import read_config
-from session import Session
-from display import AgentDisplay
+from seekra.agent import run_agent
+from seekra.cli import read_config
+from seekra.session import Session
+from seekra.display import AgentDisplay
 
 
 def main() -> int:

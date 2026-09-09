@@ -5,8 +5,8 @@ import json
 
 import httpx
 
-from operations import failure
-from retrieval import read_page, tavily_search
+from .operations import failure
+from .retrieval import read_page, tavily_search
 
 
 TOOLS = [

@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from operations import OperationResult, failure
+from .operations import OperationResult, failure
 
 PAGE_CHARS = 24000
 

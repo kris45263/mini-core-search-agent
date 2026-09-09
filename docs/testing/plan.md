@@ -67,6 +67,7 @@
 |test_deepseek_stream.py|真实增量回调、SSE/UTF-8 分片、终止条件、异常及连接释放|
 |test_tool_stream.py|交错工具分片、收到 DONE 前不执行、断流不提交|
 |test_stream_display.py / test_streaming_check.py|正文一次显示、flush、无工具追问、输入退出及输出故障|
+|test_cli_package.py|从独立目录运行已安装命令、无配置帮助/版本、UTF-8、配置路径、REPL 本地命令与模块入口|
 |test_search_controls.py|数量/域名校验与透传、默认兼容、来源显示及控制字符遮蔽|
 
 这些是明确边界的回归测试，不代表对所有网站、所有模型响应格式或事实正确性的穷尽证明。

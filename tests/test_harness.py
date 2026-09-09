@@ -9,8 +9,8 @@ import unittest
 
 import httpx
 
-from agent import run_agent
-from session import Session
+from seekra.agent import run_agent
+from seekra.session import Session
 from test_agent import call, reply
 
 
@@ -45,8 +45,8 @@ class HarnessTests(unittest.TestCase):
 
     def test_page_ranges_reuse_snapshot(self):
         """长文本可继续读同一快照，不静默丢掉尾部或重复联网。"""
-        self.assertIsNotNone(importlib.util.find_spec("retrieval"))
-        from retrieval import read_page, PAGE_CHARS
+        self.assertIsNotNone(importlib.util.find_spec("seekra.retrieval"))
+        from seekra.retrieval import read_page, PAGE_CHARS
         pages = {}
         requests = []
         def handler(request):
@@ -65,8 +65,8 @@ class HarnessTests(unittest.TestCase):
 
     def test_failed_reads_have_specific_status(self):
         """区分请求超时、提取失败、空内容和结构异常。"""
-        self.assertIsNotNone(importlib.util.find_spec("retrieval"))
-        from retrieval import read_page
+        self.assertIsNotNone(importlib.util.find_spec("seekra.retrieval"))
+        from seekra.retrieval import read_page
         for mode, code in (("timeout", "timeout"), ("failed", "extraction_failed"),
                            ("empty", "empty_content"), ("malformed", "invalid_response")):
             with self.subTest(mode=mode):
@@ -103,7 +103,7 @@ class HarnessTests(unittest.TestCase):
 
     def test_structured_notes_are_optional_and_references_checked(self):
         """结构化模式检查操作引用，笔记不冒充外部证据。"""
-        from tools import execute_tool
+        from seekra.tools import execute_tool
         args = {"goal": "目标", "observations": "已观察", "assessment": "仍不确定", "next_step": "继续查找", "references": ["missing"]}
         with httpx.Client(transport=httpx.MockTransport(lambda r: self.fail("笔记不得联网"))) as client:
             result = json.loads(execute_tool(call("think_tool", args), client=client, api_key="t", structured_think=True, known_operations={}))
@@ -140,7 +140,7 @@ class HarnessTests(unittest.TestCase):
 
     def test_invalid_page_requests_do_not_connect(self):
         """参数错误、内网字面地址和无快照续读不产生网络操作。"""
-        from retrieval import read_page
+        from seekra.retrieval import read_page
         with httpx.Client(transport=httpx.MockTransport(lambda r: self.fail("不应联网"))) as client:
             for url, start in [("file:///tmp/a", 0), ("http://127.0.0.1", 0),
                                ("http://localhost", 0), ("https://user:pw@example.org", 0),
@@ -151,7 +151,7 @@ class HarnessTests(unittest.TestCase):
 
     def test_failed_refresh_removes_stale_page(self):
         """新读取失败时不能继续把旧快照当新响应；Ctrl+C 仍然传播。"""
-        from retrieval import read_page
+        from seekra.retrieval import read_page
         pages = {"https://example.org": {"content": "旧内容"}}
         with httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(403))) as client:
             result = read_page("https://example.org", client=client, api_key="t", pages=pages)

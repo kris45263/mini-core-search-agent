@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import httpx
 
-from agent import run_agent
+from seekra.agent import run_agent
 from test_agent import call, reply
 
 
@@ -18,8 +18,8 @@ class SessionTests(unittest.TestCase):
 
     def setUp(self):
         """为每项测试建立独立会话。"""
-        self.assertIsNotNone(importlib.util.find_spec("session"), "尚未实现 session.py")
-        from session import Session
+        self.assertIsNotNone(importlib.util.find_spec("seekra.session"), "尚未实现 session.py")
+        from seekra.session import Session
         self.session = Session()
 
     def ask(self, question, handler, limit=12, session=None):
@@ -51,7 +51,7 @@ class SessionTests(unittest.TestCase):
             self.assertIn("1 次", messages[0]["content"])
             self.assertEqual(self.session.messages, saved)
             return reply("功能 A 的详情")
-        with patch("agent.date") as today:
+        with patch("seekra.agent.date") as today:
             today.today.return_value = date(2030, 1, 2)
             self.assertEqual(self.ask("第一项呢？", second, limit=1), "功能 A 的详情")
         self.assertEqual(len(self.session.messages), 7)
@@ -81,7 +81,7 @@ class SessionTests(unittest.TestCase):
 
     def test_clear_and_new_session_are_isolated(self):
         """清空后的会话和新建会话均不继承旧内容。"""
-        from session import Session
+        from seekra.session import Session
         self.ask("旧问题", lambda request: reply("旧答案"))
         fresh = Session()
         self.assertEqual(fresh.messages, [])

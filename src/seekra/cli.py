@@ -1,25 +1,38 @@
 """命令行入口：从项目 .env 读取配置，运行单次搜索或复用会话连续输入。"""
 
 import argparse
+from importlib.metadata import version
+import io
 from pathlib import Path
 import sys
 
 from dotenv import dotenv_values
 import httpx
 
-from agent import run_agent
-from session import Session
-from display import AgentDisplay
+from .agent import run_agent
+from .session import Session
+from .display import AgentDisplay
+
+
+REPL_HELP = """/help  查看帮助
+/new   清空会话，开始新对话
+/exit  退出 Seekra
+
+回答期间 Ctrl+C 取消本次提问；等待输入时 Ctrl+C 或 EOF 退出。
+会话只保留在当前进程中。"""
 
 
 def read_config(path: Path) -> dict[str, str]:
     """仅从指定 .env 读取三个配置项，不回退到系统环境或展开环境变量。"""
+    if not path.is_file():
+        raise ValueError(f"未找到配置文件：{path.resolve()}。请复制 .env.example 为 .env 并填写配置，"
+                         "或使用 --env-file 指定文件。")
     values = dotenv_values(path, interpolate=False, encoding="utf-8-sig")
     config = {}
     for name in ("DEEPSEEK_API_KEY", "DEEPSEEK_MODEL", "TAVILY_API_KEY"):
         value = (values.get(name) or "").strip()
         if not value or "${" in value:
-            raise ValueError(f"请在项目 .env 中直接填写 {name}")
+            raise ValueError(f"请在配置文件 {path} 中直接填写 {name}")
         config[name] = value
     return config
 
@@ -58,7 +71,20 @@ def run_question(question: str, *, client: httpx.Client, config: dict,
 
 def main() -> int:
     """启动单次问答或 REPL，共用配置、客户端和当前内存会话。"""
-    parser = argparse.ArgumentParser(description="最小迭代搜索 Agent：DeepSeek + Tavily")
+    # 入口统一处理文本编码，用户不再需要传入 python -X utf8。
+    # 仅配置真实文本流；嵌入调用和测试提供的自定义输出对象保持原样。
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        if isinstance(stream, io.TextIOWrapper):
+            stream.reconfigure(encoding="utf-8")
+    parser = argparse.ArgumentParser(
+        prog="seekra", description="Seekra · 终端搜索研究助手", add_help=False,
+        epilog='连续对话：seekra --repl  |  单次提问：seekra "你的问题"',
+    )
+    parser.add_argument("-h", "--help", action="help", help="查看命令帮助并退出")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {version('seekra')}",
+                        help="查看版本并退出")
+    parser.add_argument("--env-file", type=Path, default=Path(".env"), metavar="PATH",
+                        help="配置文件路径，默认读取当前工作目录的 .env")
     parser.add_argument("question", nargs="?", help="单次研究问题，请用引号包住")
     parser.add_argument("--repl", action="store_true", help="启动可连续输入的内存会话")
     parser.add_argument("--max-iterations", type=int, default=12, help="每个问题最多模型决策次数，默认 12")
@@ -70,7 +96,7 @@ def main() -> int:
     if args.max_iterations < 1:
         parser.error("最大循环次数必须大于零")
     try:
-        config = read_config(Path(__file__).resolve().with_name(".env"))
+        config = read_config(args.env_file)
     except (ValueError, OSError) as exc:
         print(f"配置错误：{exc}", file=sys.stderr)
         return 1
@@ -79,10 +105,11 @@ def main() -> int:
         if not args.repl:
             return run_question(args.question, client=client, config=config, session=session,
                                 max_iterations=args.max_iterations, verbose=args.verbose, structured_think=args.structured_think)
-        print("REPL 已启动。/new 清空会话，/exit 退出。", file=sys.stderr)
+        print("\nSeekra · 搜索研究助手\n输入问题开始研究。/help 查看帮助 · /new 新对话 · /exit 退出\n",
+              file=sys.stderr)
         while True:
             try:
-                print("你：", end="", file=sys.stderr, flush=True)
+                print("› ", end="", file=sys.stderr, flush=True)
                 question = input().strip()
             except (EOFError, KeyboardInterrupt):
                 print("\n会话已结束。", file=sys.stderr)
@@ -92,12 +119,15 @@ def main() -> int:
             if question == "/exit":
                 print("会话已结束。", file=sys.stderr)
                 return 0
+            if question == "/help":
+                print(REPL_HELP + "\n", file=sys.stderr)
+                continue
             if question == "/new":
                 session.clear()
                 print("已开始新对话。", file=sys.stderr)
                 continue
             if question.startswith("/"):
-                print("未知命令。可用命令：/new、/exit。", file=sys.stderr)
+                print("未知命令。输入 /help 查看可用命令。", file=sys.stderr)
                 continue
             # run_question 报告失败后返回；Session 保留此前成功历史，继续等待输入。
             status = run_question(question, client=client, config=config, session=session,

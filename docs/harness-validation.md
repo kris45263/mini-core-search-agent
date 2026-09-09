@@ -1,5 +1,18 @@
 # Harness 优化验收记录
 
+## Seekra CLI 包装验收（2026-09-09）
+
+代码迁移到 `src/seekra/`，新增 `seekra` 安装命令和 `python -m seekra` 入口；README 使用新的启动方式。CLI 默认读取当前工作目录的 `.env`，支持 `--env-file` 指定路径，统一处理 UTF-8，并增加欢迎信息、`› ` 提示符、`/help` 和 `--version`。
+
+- `uv sync --locked` 后，70 项 unittest 通过，其中 5 项为安装入口测试；这些测试不访问真实服务。
+- 独立临时工作目录验证帮助、版本、模块启动、REPL 本地命令、默认/显式配置；强制 `PYTHONUTF8=0` 和 `PYTHONIOENCODING=ascii` 后，中文输入输出仍通过。
+- `uv build` 成功生成 wheel 和源码包。构建器提示缓存位于源码目录；实际检查两种归档，均未包含 `.env` 或 `.uv-cache`。
+- 在项目内隔离的工具目录分别安装 wheel 和可编辑源码，验证裸命令的版本、帮助及 REPL 启动/退出。没有修改用户全局工具环境或持久 PATH。
+- 对比迁移前后 7 个核心模块的语法树，除包导入路径外一致。现有依赖锁定版本保持不变，更新项目名和安装类型。
+- 验收脚本的 `--list`、文档相对链接与代码围栏检查通过。历史 JSON 结果保持原样。
+
+本次仅验证包装、安装及交互入口，没有重新调用真实模型或搜索服务，不增加新的答案质量结论。以下为之前阶段的记录。
+
 日期：2026-09-08。研究模型使用本地配置的 `deepseek-v4-flash`；读取实现为 Tavily Extract basic，不使用网页摘要。没有保存密钥或认证头。
 
 ## 验收目标
@@ -12,7 +25,7 @@
 
 ## 工程验证
 
-当前流式与检索控制版本：65 项 unittest 通过。覆盖 SSE 增量/工具拼接、Session 回退、来源显示、数量/域名参数及旧功能。真实模型/工具结果不由这个数字认证。
+2026-09-08 流式与检索控制版本：65 项 unittest 通过。覆盖 SSE 增量/工具拼接、Session 回退、来源显示、数量/域名参数及旧功能。真实模型/工具结果不由这个数字认证。
 
 早期读取工具版本的 40 项测试通过记录如下，保留用于说明历史验证范围：
 
@@ -54,10 +67,10 @@
 
 ```powershell
 uv run python -X utf8 -m unittest discover -s tests -v
-uv run python -X utf8 main.py "只回复你好，不需要搜索。" --verbose
-uv run python -X utf8 main.py "请读取 https://docs.python.org/3.13/c-api/memory.html ，只依据这一页说明 mimalloc 小节明确写了什么。" --verbose
-uv run python -X utf8 main.py "请读取 https://example.com/mini-core-nonexistent-20260908 ，失败则报告情况，不要搜索其他来源。" --verbose
-uv run python -X utf8 main.py --repl --verbose --structured-think
+uv run seekra "只回复你好，不需要搜索。" --verbose
+uv run seekra "请读取 https://docs.python.org/3.13/c-api/memory.html ，只依据这一页说明 mimalloc 小节明确写了什么。" --verbose
+uv run seekra "请读取 https://example.com/mini-core-nonexistent-20260908 ，失败则报告情况，不要搜索其他来源。" --verbose
+uv run seekra --repl --verbose --structured-think
 ```
 
 最后四个命令会真实调用已配置服务；工程测试不联网。

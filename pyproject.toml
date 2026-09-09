@@ -1,13 +1,24 @@
 [project]
-name = "mini-core-search-agent"
+name = "seekra"
 version = "0.1.0"
-description = "使用 DeepSeek 和 Tavily 的最小迭代搜索 Agent"
+description = "Seekra：使用 DeepSeek 和 Tavily 的终端搜索研究助手"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "httpx>=0.28.1",
     "python-dotenv>=1.2.3",
 ]
+
+[project.scripts]
+seekra = "seekra.cli:main"
+
+[project.urls]
+Repository = "https://github.com/kris45263/seekra"
+Issues = "https://github.com/kris45263/seekra/issues"
+
+[build-system]
+requires = ["uv_build>=0.12.7,<0.13"]
+build-backend = "uv_build"
 
 [tool.uv]
 cache-dir = ".uv-cache"

@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 
 import httpx
-from main import main
+from seekra.cli import main
 from test_agent import reply
 
 
@@ -29,10 +29,10 @@ class ReplTests(unittest.TestCase):
             return reply("答：" + messages[-1]["content"])
         client = httpx.Client(transport=httpx.MockTransport(handler))
         out, err = io.StringIO(), io.StringIO()
-        with patch("sys.argv", ["main.py", "--repl"]), \
+        with patch("sys.argv", ["seekra", "--repl"]), \
              patch("builtins.input", side_effect=["", "第一问", "失败", "坏响应", "中断", "第二问", "/bad", "/new", "新问题", "/exit"]), \
-             patch("main.read_config", return_value={"DEEPSEEK_API_KEY": "fake", "DEEPSEEK_MODEL": "m", "TAVILY_API_KEY": "fake"}), \
-             patch("main.httpx.Client", return_value=client), redirect_stdout(out), redirect_stderr(err):
+             patch("seekra.cli.read_config", return_value={"DEEPSEEK_API_KEY": "fake", "DEEPSEEK_MODEL": "m", "TAVILY_API_KEY": "fake"}), \
+             patch("seekra.cli.httpx.Client", return_value=client), redirect_stdout(out), redirect_stderr(err):
             self.assertEqual(main(), 0)
         self.assertEqual(len(histories), 6)
         self.assertEqual([len(m) for m in histories], [2, 4, 4, 4, 4, 2])
@@ -44,17 +44,17 @@ class ReplTests(unittest.TestCase):
     def test_eof_and_input_interrupt_exit_cleanly(self):
         """等待输入时的 EOF 和 Ctrl+C 正常结束循环。"""
         for signal in (EOFError, KeyboardInterrupt):
-            with self.subTest(signal=signal), patch("sys.argv", ["main.py", "--repl"]), \
+            with self.subTest(signal=signal), patch("sys.argv", ["seekra", "--repl"]), \
                  patch("builtins.input", side_effect=signal), \
-                 patch("main.read_config", return_value={}), \
+                 patch("seekra.cli.read_config", return_value={}), \
                  redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
                 self.assertEqual(main(), 0)
 
     def test_conflicting_or_missing_arguments_fail_before_config(self):
         """非法组合和非法上限在读取配置前拒绝。"""
         for args in ([], ["--repl", "问题"], ["--repl", "--max-iterations", "0"]):
-            with self.subTest(args=args), patch("sys.argv", ["main.py", *args]), \
-                 patch("main.read_config") as config, redirect_stderr(io.StringIO()):
+            with self.subTest(args=args), patch("sys.argv", ["seekra", *args]), \
+                 patch("seekra.cli.read_config") as config, redirect_stderr(io.StringIO()):
                 with self.assertRaises(SystemExit) as raised:
                     main()
                 self.assertEqual(raised.exception.code, 2)

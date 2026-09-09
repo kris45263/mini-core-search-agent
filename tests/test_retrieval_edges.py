@@ -8,8 +8,8 @@ from unittest.mock import patch
 
 import httpx
 
-from retrieval import PAGE_CHARS, read_page, tavily_search
-from tools import TOOLS, tool_definitions, execute_tool
+from seekra.retrieval import PAGE_CHARS, read_page, tavily_search
+from seekra.tools import TOOLS, tool_definitions, execute_tool
 from test_agent import call, reply
 
 
@@ -113,7 +113,7 @@ class RetrievalEdgeTests(unittest.TestCase):
 
     def test_cli_structured_flag_reaches_real_request(self):
         """CLI 实验开关实际改变工具 schema，默认启动不会受到影响。"""
-        from main import main
+        from seekra.cli import main
         for enabled in (False, True):
             def handler(request):
                 body = json.loads(request.content)
@@ -121,7 +121,7 @@ class RetrievalEdgeTests(unittest.TestCase):
                 self.assertEqual("goal" in fields, enabled)
                 return reply("答案")
             client = httpx.Client(transport=httpx.MockTransport(handler))
-            with patch("sys.argv", ["main.py", "问题"] + (["--structured-think"] if enabled else [])), \
-                 patch("main.read_config", return_value={"DEEPSEEK_API_KEY": "d", "DEEPSEEK_MODEL": "m", "TAVILY_API_KEY": "t"}), \
-                 patch("main.httpx.Client", return_value=client), redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            with patch("sys.argv", ["seekra", "问题"] + (["--structured-think"] if enabled else [])), \
+                 patch("seekra.cli.read_config", return_value={"DEEPSEEK_API_KEY": "d", "DEEPSEEK_MODEL": "m", "TAVILY_API_KEY": "t"}), \
+                 patch("seekra.cli.httpx.Client", return_value=client), redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
                 self.assertEqual(main(), 0)

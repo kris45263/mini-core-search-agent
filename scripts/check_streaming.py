@@ -6,13 +6,12 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from dotenv import dotenv_values
 import httpx
 
-from deepseek import StreamProtocolError, stream_chat_text
-from display import TextStreamWriter
+from seekra.deepseek import StreamProtocolError, stream_chat_text
+from seekra.display import TextStreamWriter
 
 
 def read_config(path: Path) -> dict[str, str]:

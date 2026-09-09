@@ -37,8 +37,8 @@ class AgentTests(unittest.TestCase):
 
     def setUp(self):
         """明确报告尚未实现的入口，避免导入错误掩盖测试意图。"""
-        self.assertIsNotNone(importlib.util.find_spec("agent"), "尚未实现 agent.py")
-        from agent import run_agent
+        self.assertIsNotNone(importlib.util.find_spec("seekra.agent"), "尚未实现 agent.py")
+        from seekra.agent import run_agent
         self.run_agent = run_agent
 
     def run_with(self, handler, limit=12):
@@ -172,8 +172,8 @@ class ConfigTests(unittest.TestCase):
 
     def test_env_file_only_and_no_variable_interpolation(self):
         """进程环境中已有的密钥不能替代空 .env，也不能通过插值导入。"""
-        self.assertIsNotNone(importlib.util.find_spec("main"), "尚未实现 main.py")
-        from main import read_config
+        self.assertIsNotNone(importlib.util.find_spec("seekra.cli"), "尚未实现 seekra.cli")
+        from seekra.cli import read_config
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / ".env"
             with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "process-secret"}):
@@ -192,7 +192,7 @@ class VerboseTests(unittest.TestCase):
 
     def test_repeated_search_results_are_shown_in_full_each_time(self):
         """跨搜索不去重、不截断片段，且正常还原换行。"""
-        from agent import run_agent
+        from seekra.agent import run_agent
         snippet = "第一行\n" + "完整片段" * 500 + "\n最后一行"
         def handler(request):
             if request.url.host == "api.tavily.com":
@@ -212,7 +212,7 @@ class VerboseTests(unittest.TestCase):
 
     def test_failures_and_empty_search_remain_observable(self):
         """空结果、搜索错误和上限都有真实事件，错误结束不伪装成答案。"""
-        from agent import run_agent
+        from seekra.agent import run_agent
         for mode in ("empty", "search_error", "limit", "model_error", "truncated"):
             with self.subTest(mode=mode):
                 err = io.StringIO()
@@ -244,7 +244,7 @@ class VerboseTests(unittest.TestCase):
 
     def test_redaction_only_changes_display(self):
         """正文意外包含密钥时仅遮蔽终端副本，不修改真实答案。"""
-        from agent import run_agent
+        from seekra.agent import run_agent
         err = io.StringIO()
         with httpx.Client(transport=httpx.MockTransport(lambda request: reply("回显 fake-ds"))) as client:
             with redirect_stderr(err):
@@ -257,7 +257,7 @@ class VerboseTests(unittest.TestCase):
 
     def test_cli_verbose_keeps_requests_identical_and_separates_output(self):
         """使用真实命令行入口及循环，仅模拟配置和 HTTP 传输。"""
-        from main import main
+        from seekra.cli import main
         runs = []
         for verbose in (False, True):
             requests = []
@@ -285,10 +285,10 @@ class VerboseTests(unittest.TestCase):
                 return reply("这是测试用的答案正文。")
 
             client = httpx.Client(transport=httpx.MockTransport(handler))
-            with patch("sys.argv", ["main.py", "问题"] + (["--verbose"] if verbose else [])), \
-                 patch("main.read_config", return_value={"DEEPSEEK_API_KEY": "fake-ds",
+            with patch("sys.argv", ["seekra", "问题"] + (["--verbose"] if verbose else [])), \
+                 patch("seekra.cli.read_config", return_value={"DEEPSEEK_API_KEY": "fake-ds",
                        "DEEPSEEK_MODEL": "test-model", "TAVILY_API_KEY": "fake-tv"}), \
-                 patch("main.httpx.Client", return_value=client), \
+                 patch("seekra.cli.httpx.Client", return_value=client), \
                  redirect_stdout(out), redirect_stderr(err):
                 status = main()
                 self.assertEqual(status, 0, err.getvalue())

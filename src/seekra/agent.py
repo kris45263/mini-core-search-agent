@@ -6,10 +6,10 @@ from copy import deepcopy
 
 import httpx
 
-from tools import tool_definitions, execute_tool
-from display import make_emitter
-from session import Session
-from deepseek import stream_chat_completion
+from .tools import tool_definitions, execute_tool
+from .display import make_emitter
+from .session import Session
+from .deepseek import stream_chat_completion
 
 
 SYSTEM_PROMPT = """你是搜索研究助手。今天是 {today}。
