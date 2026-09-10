@@ -12,6 +12,8 @@ from unittest.mock import patch
 
 import httpx
 
+from seekra.display import AgentDisplay
+
 
 def reply(content=None, calls=None, finish=None):
     """构造 DeepSeek Chat Completions 的关键响应字段。"""
@@ -205,9 +207,9 @@ class VerboseTests(unittest.TestCase):
         err = io.StringIO()
         with httpx.Client(transport=httpx.MockTransport(handler)) as client, redirect_stderr(err):
             run_agent("问题", client=client, model="m", deepseek_api_key="fake-ds",
-                      tavily_api_key="fake-tv", verbose=True)
+                      tavily_api_key="fake-tv", on_event=AgentDisplay(True, secrets=('fake-ds', 'fake-tv')).event)
         self.assertEqual(err.getvalue().count(snippet), 2)
-        self.assertEqual(err.getvalue().count("https://example.org/repeated"), 2)
+        self.assertEqual(err.getvalue().count("https://example.org/repeated"), 4)
         self.assertNotIn("答案正文", err.getvalue())
 
     def test_failures_and_empty_search_remain_observable(self):
@@ -231,10 +233,10 @@ class VerboseTests(unittest.TestCase):
                     if mode in {"limit", "model_error", "truncated"}:
                         with self.assertRaises((RuntimeError, httpx.HTTPStatusError)):
                             run_agent("问题", client=client, model="m", deepseek_api_key="fake-ds",
-                                      tavily_api_key="fake-tv", verbose=True, max_iterations=2)
+                                      tavily_api_key="fake-tv", on_event=AgentDisplay(True).event, max_iterations=2)
                     else:
                         run_agent("问题", client=client, model="m", deepseek_api_key="fake-ds",
-                                  tavily_api_key="fake-tv", verbose=True)
+                                  tavily_api_key="fake-tv", on_event=AgentDisplay(True, secrets=('fake-ds', 'fake-tv')).event)
                 if mode in {"limit", "model_error", "truncated"}:
                     self.assertIn("异常结束", err.getvalue())
                     self.assertNotIn("模型决定：直接回答", err.getvalue())
@@ -249,7 +251,7 @@ class VerboseTests(unittest.TestCase):
         with httpx.Client(transport=httpx.MockTransport(lambda request: reply("回显 fake-ds"))) as client:
             with redirect_stderr(err):
                 answer = run_agent("问题 fake-tv", client=client, model="m", deepseek_api_key="fake-ds",
-                                   tavily_api_key="fake-tv", verbose=True)
+                                   tavily_api_key="fake-tv", on_event=AgentDisplay(True, secrets=('fake-ds', 'fake-tv')).event)
         self.assertEqual(answer, "回显 fake-ds")
         self.assertNotIn("fake-ds", err.getvalue())
         self.assertNotIn("fake-tv", err.getvalue())

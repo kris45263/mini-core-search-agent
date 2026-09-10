@@ -45,7 +45,7 @@ def run_question(question: str, *, client: httpx.Client, config: dict,
         run_agent(
             question, client=client, session=session, model=config["DEEPSEEK_MODEL"],
             deepseek_api_key=config["DEEPSEEK_API_KEY"], tavily_api_key=config["TAVILY_API_KEY"],
-            max_iterations=max_iterations, verbose=verbose,
+            max_iterations=max_iterations,
             structured_think=structured_think,
             on_content=view.content, on_event=view.event,
         )

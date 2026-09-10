@@ -9,6 +9,8 @@ import unittest
 
 import httpx
 
+from seekra.display import AgentDisplay
+
 from seekra.agent import run_agent
 from seekra.session import Session
 from test_agent import call, reply
@@ -132,7 +134,7 @@ class HarnessTests(unittest.TestCase):
             err = io.StringIO()
             with httpx.Client(transport=httpx.MockTransport(handler)) as client, redirect_stderr(err):
                 run_agent("问题", client=client, model="m", deepseek_api_key="fake-ds",
-                          tavily_api_key="fake-tv", verbose=verbose)
+                          tavily_api_key="fake-tv", on_event=AgentDisplay(verbose).event)
             self.assertEqual(err.getvalue().count("独特正文"), int(verbose))
             self.assertNotIn("最终正文", err.getvalue())
             runs.append(requests)

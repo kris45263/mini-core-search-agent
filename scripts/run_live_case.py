@@ -18,7 +18,7 @@ from seekra.display import AgentDisplay
 
 def main() -> int:
     """每次使用独立 Session；输出位置由调用者明确指定，不覆盖已有记录。"""
-    cases = json.loads((ROOT / "docs/testing/cases.json").read_text(encoding="utf-8"))
+    cases = json.loads((ROOT / "evals/cases.json").read_text(encoding="utf-8"))
     parser = argparse.ArgumentParser(description="真实 API 验收（会产生服务调用费用）")
     parser.add_argument("--list", action="store_true", help="列出问题，不调用 API")
     parser.add_argument("--case", choices=[case["id"] for case in cases])
@@ -73,7 +73,7 @@ def main() -> int:
                           "sources": [{"url": row["url"], "title": row["title"]} for row in result.get("results", [])]})
     record = {**case, "model": config["DEEPSEEK_MODEL"], "streaming": True, "max_iterations": 12, "model_calls": model_calls,
               "seconds": round(time.monotonic() - start, 2), "answer": answer, "error": error, "trace": trace,
-              "judgment": "待人工按 docs/testing/plan.md 核对；正常退出不等于答案正确。"}
+              "judgment": "待人工按 docs/validation.md 核对；正常退出不等于答案正确。"}
     text = json.dumps(record, ensure_ascii=False, indent=2)
     # 记录只是验收产物，隐藏意外回显的本次密钥，不改变实际模型请求。
     for key in (config["DEEPSEEK_API_KEY"], config["TAVILY_API_KEY"]):

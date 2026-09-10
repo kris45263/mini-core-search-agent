@@ -119,41 +119,21 @@ seekra --env-file "C:\path\to\seekra\.env" --repl
 
 工具成功只代表取得内容，不证明来源可靠、版本适用或模型结论正确。网页提取可能失败或不完整，不支持登录及交互式浏览器操作。Session 不支持并发访问，也不自动压缩历史；长会话可能达到模型上下文上限。结构化笔记尚未证明普遍改善答案质量。
 
-## 开发与验证
+## 开发者入口
 
-先在项目根目录运行 `uv sync --locked`。主 CLI 使用已安装的 `src/seekra` 包，测试和脚本也从同一个包导入。
-
-工程测试不联网、不读取真实密钥；安装入口测试使用临时目录和假配置：
+先运行 `uv sync --locked`，再执行不联网的工程测试：
 
 ```powershell
 uv run python -X utf8 -m unittest discover -s tests -v
 ```
 
-列出真实验收问题（不调用 API）：
+建议阅读顺序：
 
-```powershell
-uv run python -X utf8 scripts/run_live_case.py --list
-```
-
-显式运行一个真实用例并保存新记录（会产生服务调用费用，不覆盖已有文件）：
-
-```powershell
-uv run python -X utf8 scripts/run_live_case.py --case page --output docs/testing/results/my-page-run.json
-```
-
-无工具流式开发验收仍可使用 `uv run python -X utf8 scripts/check_streaming.py`；它与主 Agent 共用同一接收器。这些开发脚本保留 Python 入口，不作为额外产品命令。
-
-构建可安装的分发包：
-
-```powershell
-uv build
-```
-
-- [模块与数据约定](docs/architecture.md)
-- [测试方案与判定标准](docs/testing/plan.md)
-- [真实验收结果与已知问题](docs/harness-validation.md)
-- [实际测试数据](docs/testing/results/)
-- [检索与页面噪声研究结论](docs/retrieval-findings.md)
+- [架构与数据契约](docs/architecture.md)：研究循环、模块职责、Session、流式执行与设计理由。
+- [开发指南](docs/development.md)：开发环境、修改位置、运行测试与构建分发包。
+- [验证方法与能力边界](docs/validation.md)：测试用例、判定标准、已验证和未覆盖范围。
+- [研究发现与已知问题](docs/research-findings.md)：think、证据归因、目标匹配和噪声的实际观察。
+- [实验案例与证据](evals/README.md)：问题原文、精选结果和复现脚本。
 
 ## 项目结构
 
@@ -172,14 +152,15 @@ src/
    ├─ operations.py  公共操作结果约定
    ├─ display.py     终端展示
    └─ session.py     内存消息与页面快照
-tests/
-docs/
-scripts/
+tests/             离线工程回归
+docs/              开发者知识库
+evals/             真实案例与实验证据
+scripts/           开发和实验入口
 ```
 
 ## 帮助与参考
 
-项目由 [kris45263](https://github.com/kris45263) 维护。问题或建议可提交到 [Issues](https://github.com/kris45263/seekra/issues)，请提供复现命令、预期与实际行为，并删除密钥及敏感内容。提交代码前请运行工程测试，Python 文件说明和注释使用中文。
+项目由 [kris45263](https://github.com/kris45263) 维护。问题或建议可提交到 [Issues](https://github.com/kris45263/seekra/issues)，请提供复现命令、预期与实际行为，并删除密钥及敏感内容。
 
 研究闭环参考 [langchain-ai/deep_research_from_scratch 的 Notebook 2](https://github.com/langchain-ai/deep_research_from_scratch/tree/93f35e5d2a51590f9542207a9ff66a01901da5bc)。
 

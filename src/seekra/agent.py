@@ -7,7 +7,6 @@ from copy import deepcopy
 import httpx
 
 from .tools import tool_definitions, execute_tool
-from .display import make_emitter
 from .session import Session
 from .deepseek import stream_chat_completion
 
@@ -32,7 +31,6 @@ SYSTEM_PROMPT = """你是搜索研究助手。今天是 {today}。
 def run_agent(
     question: str, *, client: httpx.Client, model: str,
     deepseek_api_key: str, tavily_api_key: str, max_iterations: int = 12,
-    verbose: bool = False,
     session: Session | None = None,
     structured_think: bool = False,
     on_content: Callable[[str], None] | None = None,
@@ -43,15 +41,11 @@ def run_agent(
     提供 session 时继承已完成历史，否则使用临时会话。只在成功回答后保存。
     本次消息在深复制的副本中增长，失败或中断不污染原历史；不压缩、不持久化。
     一次迭代指一次模型请求，同一响应中的工具调用按顺序全部执行。
-    verbose 只向 stderr 打印进度，不向消息历史中添加内容。
+    正文和生命周期仅通过回调通知；未配置回调时不产生终端输出。
     """
-    debug = make_emitter(verbose, (deepseek_api_key, tavily_api_key))
-
     def emit(event: str, **details) -> None:
         if on_event is not None:
             on_event(event, **details)
-        if event != "model_response" or on_content is None:
-            debug(event, **details)
 
     if not question.strip():
         raise ValueError("用户问题不能为空")
